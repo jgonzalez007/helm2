@@ -89,9 +89,50 @@ def absolute_to_local(stamp: str) -> str:
         return ""
 
 
+# A third shape, from Slack: "2026-10-15 23:30:56 CDT" — a space separator and a
+# timezone abbreviation rather than an offset. Rejecting it dropped every Slack
+# message, exactly as the trailing Z did for mail.
+_ABBREV = re.compile(r"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?"
+                     r"\s+([A-Z]{2,5})$")
+
+
+def abbrev_to_local(stamp: str) -> tuple[str, str]:
+    """A timestamp ending in a zone abbreviation. Returns (local ISO, warning).
+
+    shortcut: an abbreviation is not an offset — "CST" is six different zones
+    worldwide — so the time is read as this machine's local wall clock and any
+    abbreviation this machine does not use is reported rather than guessed at.
+    Upgrade to an abbreviation table if a connector starts reporting a zone the user
+    is not in.
+    """
+    m = _ABBREV.match(_s(stamp, 48))
+    if not m:
+        return "", ""
+    base, abbrev = m.group(1), m.group(2)
+    local = to_local_iso(base)
+    if not local:
+        return "", ""
+    known = {n.upper() for n in time.tzname if n}
+    warning = "" if abbrev.upper() in known else (
+        f"timestamps arrive in {abbrev!r} but this machine is "
+        f"{'/'.join(sorted(known)) or 'unknown'}; they are read as local time")
+    return local, warning
+
+
 def any_time_to_local(stamp: str) -> str:
-    """Accepts either shape. Use where the connector has been seen to return both."""
-    return absolute_to_local(stamp) or to_local_iso(stamp)
+    """Accepts every shape this connector family has been seen to return.
+
+    Three so far, and each new one silently dropped an entire source until it was
+    handled: wall clock (calendar), a real instant with Z or an offset (mail), and a
+    local time with a zone abbreviation (Slack).
+    """
+    absolute = absolute_to_local(stamp)
+    if absolute:
+        return absolute
+    with_abbrev, _ = abbrev_to_local(stamp)
+    if with_abbrev:
+        return with_abbrev
+    return to_local_iso(stamp)
 
 
 def timezone_mismatch(reported: str) -> str:

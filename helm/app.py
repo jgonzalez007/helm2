@@ -24,6 +24,7 @@ from .connectors.claude_source import CalendarSource
 from .connectors.demo import DEMO_SETTINGS, DemoSource
 from .connectors.mail_source import MailSource, describe_voice
 from .connectors.pending import PendingSource
+from .connectors.slack_source import SlackSource
 from .hotkeys import BINDINGS, Hotkeys
 from .models import ApprovalToken, Flag, Item, SourceStatus, now_iso
 from .scheduler import Scheduler
@@ -68,7 +69,8 @@ class Api:
         domains = self._store.get_setting("internal_domains") or []
         return {
             "mail": MailSource(ME, domains, self._availability, store=self._store),
-            "slack": PendingSource("slack", "phase 4"),
+            "slack": SlackSource(ME, domains, self._availability,
+                                 store=self._store),
             "calendar": CalendarSource(ME, domains, self._availability),
         }
 
@@ -433,8 +435,8 @@ class Api:
 
         # A mail draft IS the answer: the model writes it once and the card shows the
         # same text, rather than generating prose and then a second, different draft.
-        if item is not None and isinstance(src, MailSource) and wants_write:
-            return self._draft_mail(item_id, src, prompt, emit)
+        if item is not None and wants_write and isinstance(src, (MailSource, SlackSource)):
+            return self._draft_reply(item_id, src, prompt, emit)
 
         if item is not None and isinstance(src, CalendarSource) and "prep" in prompt.lower():
             self._store.log_action("prep_brief", item_id, "calendar", prompt[:200], "started")
@@ -455,23 +457,24 @@ class Api:
         if not self._demo:
             reply = (f"{reply}\n\n[Not a real answer: chat for {item.source if item else 'this'} "
                      "items is scripted until its phase lands. Live right now: mail "
-                     "drafts and calendar prep briefs.]")
+                     "and Slack drafts, and calendar prep briefs.]")
         for token in _tokens(reply):
             emit(token)
             time.sleep(0.012)
         return reply, self._approval_card(item_id, prompt)
 
-    def _draft_mail(self, item_id: str, src: MailSource, prompt: str,
-                    emit) -> tuple[str, dict | None]:
+    def _draft_reply(self, item_id: str, src, prompt: str,
+                     emit) -> tuple[str, dict | None]:
         """Write a reply through the connector. Nothing is sent, and nothing can be."""
-        self._store.log_action("draft", item_id, "mail", prompt[:200], "started")
+        channel = src.name
+        self._store.log_action("draft", item_id, channel, prompt[:200], "started")
         emit("Drafting in your voice…\n\n")
         try:
             draft = src.draft(item_id, prompt)
         except cli.ClaudeUnavailable as e:
             msg = f"Could not reach the connector: {e}"
             emit(msg)
-            self._store.log_action("draft", item_id, "mail", str(e)[:200], "failed")
+            self._store.log_action("draft", item_id, channel, str(e)[:200], "failed")
             return msg, None
         except NotImplementedError as e:
             emit(str(e))

@@ -66,8 +66,8 @@ Needs the real connectors and reads your real data. Minutes, not seconds:
 .\.venv\Scripts\python.exe -m tests.live_mail --draft
 ```
 
-`--demo` is the default. `--live` gives the real calendar and mail; Slack reports
-`unavailable` until phase 4.
+`--demo` is the default. `--live` gives the real calendar, mail and Slack. Nothing
+can be sent or posted until phase 10.
 
 ## NO NPM. EVER.
 
@@ -130,6 +130,9 @@ mcp__claude_ai_Slack__slack_read_channel
 | calendar sweep, 25 events (phase 2, measured live) | 124–144 s |
 | mail sweep, 15 inbox + 12 sent, two tool calls | 171 s (was 197–242 s at page 25) |
 | stage-2 batch, 3 items, no tools (phase 5) | 75 s |
+| Slack profile / DM list / mention search / DM reads | 97 / 73 / 68 / 92 s each |
+| Slack sweep, all of the above in one prompt (phase 4) | 151–157 s |
+| Slack draft, cold session | 26 s |
 | mail thread fetch, on open (phase 3) | 70 s |
 | mail draft, cold session | 34 s |
 | mail draft, warm session | 4.6 s |
@@ -195,6 +198,39 @@ and a change that weakens any of them is a bug:
 
 `tests/test_phase5.py` asserts all three, including that a planted body marker never
 appears in the rendered prompt.
+
+### Three timestamp shapes, and each one broke a source
+
+The same connector family returns a different timestamp shape per source, and each
+new one silently dropped an entire source until `_clean.any_time_to_local` learned it:
+
+| Source | Shape | Parser |
+| --- | --- | --- |
+| calendar | `2026-10-16T00:00:00.0000000` wall clock | `to_local_iso` |
+| mail | `2026-10-19T18:39:52.000Z` a real instant | `absolute_to_local` |
+| Slack | `2026-10-15 23:30:56 CDT` local + abbreviation | `abbrev_to_local` |
+
+They must not be parsed the same way: converting a wall clock shifts every meeting,
+and not converting an instant shows every email at the wrong hour. When a new source
+returns nothing while reporting `live`, suspect the timestamp before anything else.
+
+### Constrain which tools may be used, never how many calls
+
+The first Slack sweep demanded "exactly three tool calls" and the model refused the
+whole thing, correctly: reading six DMs is one list plus six reads. Name the tools
+that may be used and let the model use as many reads as the work needs.
+
+### A Slack broadcast is not a mention
+
+`slack_source.mentions_me` requires the user's own id in the message text. `<!here>`,
+`<!channel>` and `<!everyone>` address the room, and the only "mention" a real
+three-day search returned was exactly one of those. Counting a broadcast as a direct
+ping would put every channel announcement at the top of the focus queue.
+
+Slack carries no email address on a message, so `handle_to_address` derives one from
+the handle plus the primary internal domain. Every handle observed in this workspace
+is exactly the email local part, which lets one VIP list cover both sources — see the
+`shortcut:` note on that function.
 
 ### A sender is classified once, and a click outranks any model
 
@@ -280,6 +316,7 @@ helm/
     _clean.py       field coercion shared by every real source
     claude_source.py  CalendarSource (phase 2)
     mail_source.py    MailSource (phase 3)
+    slack_source.py   SlackSource (phase 4)
     pending.py      sources that are not built yet, and say so
 ui/                 static HTML/CSS/JS, no build step
 tests/              assert-based self-checks, no test runner needed

@@ -19,7 +19,7 @@ from .bus import EventBus
 # plan said 2 minutes for mail, which a 230-second sweep cannot do — it would run
 # back to back forever. Both are 10 minutes in work hours. The meeting countdown is
 # a local timer, so freshness there costs nothing either way.
-WORK_HOURS = {"mail": 600, "slack": 300, "calendar": 600}
+WORK_HOURS = {"mail": 600, "slack": 600, "calendar": 600}
 OFF_HOURS = {"mail": 900, "slack": 900, "calendar": 1800}
 
 WORK_START, WORK_END = dtime(8, 0), dtime(18, 0)

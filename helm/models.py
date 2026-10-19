@@ -44,6 +44,7 @@ class Item:
     # structured metadata rather than from the body.
     to_me_direct: bool = True        # on To:/@you rather than Cc:/channel noise
     cc_me: bool = False              # on Cc, which is not the same as not addressed
+    group_chat: bool = False         # a room with others in it, not a 1:1
     organizer_is_me: bool = False
     presenter_is_me: bool = False
     rsvp_pending: bool = False

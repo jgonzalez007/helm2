@@ -4,7 +4,7 @@ A local-first desktop command center for one person's work day: Outlook mail and
 calendar, Slack, two-axis importance/urgency flags, per-item chat, daily summaries,
 and a shortcuts panel. One Python codebase, Windows and macOS, **no npm**.
 
-Phases 1, 2, 3 and 5 of 11 are complete: the whole UI on fixtures, plus a real read-only
+Phases 1 to 5 of 11 are complete: the whole UI on fixtures, plus a real read-only
 calendar and real mail — triage, needs-reply detection and drafts in your own
 voice — through the connectors your organization already approved.
 
@@ -44,8 +44,8 @@ If Microsoft 365 says `connected`:
 .\.venv\Scripts\python.exe run.py --live
 ```
 
-Your real calendar and mail, read-only plus drafts. Slack shows as `unavailable`
-and names the phase that builds it — live mode never pads a gap with fixtures.
+Your real calendar, mail and Slack — read-only plus drafts. Nothing can be sent or
+posted: that is phase 10.
 
 **What live mode costs.** Every sweep is a model turn. Measured here: a calendar
 sweep takes 124–144 s and a mail sweep 197–232 s, so both run every 10 minutes in
@@ -71,6 +71,10 @@ the real cadence, the next sweep and the measured round-trip.
 ```
 
 ```bash
+.\.venv\Scripts\python.exe -m tests.test_phase4
+```
+
+```bash
 .\.venv\Scripts\python.exe -m tests.test_phase5
 ```
 
@@ -91,6 +95,10 @@ Needs the connectors and reads your own data. Minutes, not seconds:
 ```
 
 ```bash
+.\.venv\Scripts\python.exe -m tests.live_slack --draft
+```
+
+```bash
 .\.venv\Scripts\python.exe -m tests.live_classify
 ```
 
@@ -100,7 +108,7 @@ and the JS surface. `test_phase2` (134 checks) covers connector parsing, hostile
 input, polling cadence and the tool allowlists. `smoke_window` opens the real
 windows, drives the UI and reads the rendered DOM back — it needs a display.
 `test_phase3` (154 checks) covers mail parsing, needs-reply, waiting-on and the voice
-profile. `test_phase5` (72 checks) covers stage-2 classification, its caching, and
+profile. `test_phase4` (115 checks) covers Slack parsing, broadcasts versus mentions and Slack drafts. `test_phase5` (72 checks) covers stage-2 classification, its caching, and
 the two limits above. `live_calendar`, `live_mail` and `live_classify` each do one real pass against your
 own data.
 
@@ -133,6 +141,26 @@ Press `?` in the panel for the full list.
 | `j` `k` | move through the focus queue |
 | `r` `e` `s` `d` | reply, done, snooze, delegate |
 | `?` | keyboard overlay |
+
+## What phase 4 adds
+
+- **Real Slack**: one sweep, three tool calls — who you are, your DMs and group DMs,
+  and messages that mention you
+- **`<!here>` is not a mention of you.** The only "mention" in a real three-day
+  search was a `<!here> Team,` broadcast. A direct ping requires your own user id in
+  the message, so channel announcements never reach the focus queue.
+- **Needs-reply from who spoke last**: your own messages are identified by the
+  connector's `is_me`, not by comparing display names
+- **One VIP list covers both sources.** Slack carries no email addresses, so a handle
+  plus your primary internal domain is used as the address — every handle observed
+  here is exactly the email local part.
+- **Slack markup flattened** for list rows: `<@U123>`, `<#C1|chan>`, `<https://x|y>`
+- **Drafts** addressed to the conversation, shorter and plainer than email, every one
+  ending in an approval card marked `post` rather than `send`
+- **A group conversation between other people is not your reply.** In a room with
+  several participants you must be part of the exchange, and a conversation nobody has
+  touched in 14 days drops out of the queue. On the real workspace this cut the queue
+  from four items to one, each exclusion naming its reason.
 
 ## What phase 5 adds
 
@@ -178,10 +206,14 @@ Press `?` in the panel for the full list.
 
 ## Known limits
 
-- **Slack chat is still scripted.** Mail drafts and calendar prep briefs are live;
-  Slack is phase 4, and the drawer says so rather than passing a canned answer off
-  as a reasoned one.
-- **Phase 4 (Slack) is not built.** It reports `unavailable` and names its phase.
+- **Chat beyond drafting is still scripted.** Mail and Slack drafts and calendar prep
+  briefs are live; the other quick actions say so rather than passing a canned answer
+  off as a reasoned one.
+- **Slack handles are assumed to match email local parts.** True for every handle
+  observed in this workspace, and Settings shows the derived address, but a
+  workspace where they differ would not match your VIP list.
+- **Slack mentions come from a 3-day search.** Older mentions are not swept.
+- **Slack sweeps read 6 conversations deep.** A busier workspace would need paging.
 - **Threads group by subject.** The connector returns an empty conversation id for
   every message, so HELM strips `Re:`/`FW:` and groups on what is left — the way mail
   clients did before conversation ids existed. Two unrelated threads that share a

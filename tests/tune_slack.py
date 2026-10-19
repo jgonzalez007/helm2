@@ -56,6 +56,9 @@ def run(label: str, prompt: str, timeout: int = 420) -> None:
         print(f"FAILED after {time.perf_counter() - t0:.1f} s: {e}")
         return
     print(f"{elapsed / 1000:.1f} s, {len(reply)} chars")
+    print("--- raw (first 1500) ---")
+    print(reply[:1500])
+    print("--- end raw ---")
     parsed = cli.extract_json(reply)
     print(f"parsed: {type(parsed).__name__}")
     if isinstance(parsed, list):
@@ -71,10 +74,22 @@ def run(label: str, prompt: str, timeout: int = 420) -> None:
 
 
 if __name__ == "__main__":
+    import sys
+
     av = cli.probe_availability()
     print(f"Slack connector: {'connected' if av.slack else av.reason('Slack')}")
     if not av.slack:
         raise SystemExit(1)
+
+    if "--sweep" in sys.argv:
+        # The real sweep prompt, so its raw reply can be read. The source keeps only
+        # the parsed result, which is no help when the result is an empty list.
+        from helm.connectors.slack_source import SWEEP_PROMPT, SlackSource
+        run("the real sweep prompt",
+            SWEEP_PROMPT.format(dm_limit=20, dm_read=6, per_dm=4, days=3),
+            SlackSource.SWEEP_TIMEOUT)
+        raise SystemExit(0)
+
     run("A: who am I", ME, 240)
     run("B: DM and group-DM list", DMS, 300)
     run("C: mentions of me, last 3 days", MENTIONS, 420)
