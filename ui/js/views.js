@@ -419,6 +419,26 @@ export function viewSettings(st) {
     </div>
 
     <div class="card">
+      <h3>What HELM has learned about senders</h3>
+      <p>A click teaches it for good; the rest it worked out once and cached, so the
+        same sender is never judged twice. Pinned rows came from you and no
+        classifier overwrites them.</p>
+      ${(st.senders || []).length
+    ? (st.senders || []).map((r) => `<div class="sc-row">
+        <kbd>${r.pinned ? 'yours' : (r.decided_by === 'claude'
+      ? (r.confidence != null ? r.confidence.toFixed(2) : 'claude') : 'rules')}</kbd>
+        <span class="lbl">${r.is_automated ? 'automated' : 'person'}</span>
+        <span class="url">${esc(r.addr)} — ${esc(r.reason || 'no reason recorded')}</span>
+        <button class="btn btn--ghost" data-forget="${esc(r.addr)}">Forget</button>
+      </div>`).join('')
+    : '<div class="empty">Nothing learned yet.</div>'}
+      <div class="nextup-actions" style="margin-top:12px">
+        <button class="btn" id="classify-now">Judge the unclear ones now</button>
+      </div>
+      <div id="classify-msg" style="margin-top:10px;font-size:12.5px;color:var(--mute)"></div>
+    </div>
+
+    <div class="card">
       <h3>People and noise</h3>
       <p>Stage-1 flags are only as good as these lists. Editing one reflags everything
         except items you have pinned with an override.</p>

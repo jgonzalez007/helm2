@@ -16,6 +16,7 @@ from pathlib import Path
 import webview
 
 from . import claude_cli as cli
+from . import classifier
 from . import flags as flagmod
 from .bus import EventBus
 from .connectors.base import SendRefused
@@ -106,6 +107,7 @@ class Api:
             muted_channels=set(s.get("muted_channels") or []),
             internal_domains=set(s.get("internal_domains") or []),
             keyword_weights=dict(s.get("keyword_weights") or {}),
+            sender_profiles=self._store.sender_profiles(),
         )
 
     def poll(self, source: str) -> bool:
@@ -160,7 +162,64 @@ class Api:
         self._store.set_source_status(st)
         self._bus.publish("source_status", {"source": source, "health": st.health,
                                             "count": st.count})
+        if st.health == "live" and not self._demo:
+            self._classify_later()
         return st.health in ("live", "demo")
+
+    # ── stage 2 ─────────────────────────────────────────────────────────────
+
+    def classify_ambiguous(self, limit: int = classifier.BATCH) -> dict:
+        """Ask Claude about the items the rules could not settle.
+
+        Runs after a sweep, in the background, so a slow verdict never blocks the
+        panel. Importance only: urgency stays with the rules. A verdict about the
+        sender is remembered, so the same question is never paid for twice.
+        """
+        if self._demo:
+            return {"skipped": "demo mode classifies with rules only"}
+
+        cfg = self._settings_obj()
+        items = self._store.items()
+        flags = self._store.flags()
+        profiles = self._store.sender_profiles()
+        batch = classifier.candidates(items, flags, cfg, profiles)[:limit]
+        if not batch:
+            return {"asked": 0, "note": "the rules settled everything"}
+
+        try:
+            verdicts = classifier.classify_batch(batch)
+        except cli.ClaudeUnavailable as e:
+            self._store.log_action("classify", f"{len(batch)} items", "flags",
+                                   str(e)[:200], "failed")
+            return {"error": str(e)[:200], "asked": len(batch)}
+
+        by_id = {i.id: i for i in batch}
+        changed = 0
+        for verdict in verdicts:
+            item = by_id.get(verdict["id"])
+            if item is None:
+                continue
+            flag = self._store.flag(item.id) or Flag(item_id=item.id)
+            if flag.pinned:
+                continue
+            before = flag.importance
+            flag = classifier.apply(verdict, flag)
+            flag.recheck_after = classifier.next_recheck()
+            self._store.set_flag(flag)
+            if item.sender_addr:
+                self._store.set_sender_profile(item.sender_addr,
+                                               **classifier.profile_from(verdict))
+            if flag.importance != before:
+                changed += 1
+
+        self._store.log_action("classify", f"{len(batch)} items", "flags",
+                               f"{len(verdicts)} verdicts, {changed} changed", "done")
+        self._bus.publish("flag_changed", {"all": True, "claude": len(verdicts)})
+        return {"asked": len(batch), "answered": len(verdicts), "changed": changed}
+
+    def _classify_later(self) -> None:
+        threading.Thread(target=self.classify_ambiguous, daemon=True,
+                         name="helm-classify").start()
 
     def _retire_missing(self, source: str, seen: set[str]) -> None:
         for item in self._store.items(source=source):
@@ -208,6 +267,7 @@ class Api:
             "action_log": self._store.action_log(50),
             "schedule": self.schedule_info(),
             "voice": describe_voice(self._store.get_setting("voice_profile", {})),
+            "senders": self.learned_senders(),
         }
 
     def list_items(self) -> list[dict]:
@@ -246,6 +306,7 @@ class Api:
             "needs_reply_reason": (src.reply_reason(item_id)
                                    if hasattr(src, "reply_reason") else ""),
             "voice": describe_voice(self._store.get_setting("voice_profile", {})),
+            "senders": self.learned_senders(),
             # What the chat drawer is allowed to attach, stated rather than implied.
             "attached": [
                 {"label": "this message", "included": True},
@@ -301,27 +362,45 @@ class Api:
         return flag.to_dict()
 
     def _learn(self, item_id: str, kind: str) -> None:
-        """Local learning: adjust lists and keyword weights, never the pinned flag."""
+        """Local learning. One click teaches HELM something durable about a sender.
+
+        Earlier this adjusted keyword weights and then wrote the VIP and mute lists
+        back unchanged, which taught nothing. The sender profile is the real memory:
+        it is consulted by stage 1 for free and stops stage 2 ever asking again.
+        """
         item = self._store.item(item_id)
         if item is None or not item.sender_addr:
             return
-        addr = item.sender_addr.lower()
+
+        weights = dict(self._store.get_setting("keyword_weights") or {})
+        step = -1 if kind in ("not_important", "less_urgent") else 1
+        for word in _subject_words(item.subject):
+            weights[word] = weights.get(word, 0) + step
+        self._store.set_setting("keyword_weights", weights)
+
         if kind == "not_important":
-            muted = set(self._store.get_setting("muted_senders") or [])
-            weights = dict(self._store.get_setting("keyword_weights") or {})
-            for word in _subject_words(item.subject):
-                weights[word] = weights.get(word, 0) - 1
-            self._store.set_setting("keyword_weights", weights)
-            # One click says "less of this", not "never again" — muting a sender
-            # takes a second click in Settings.
-            self._store.set_setting("muted_senders", sorted(muted))
-        elif kind in ("more_important", "more_urgent"):
-            vips = set(self._store.get_setting("vips") or [])
-            weights = dict(self._store.get_setting("keyword_weights") or {})
-            for word in _subject_words(item.subject):
-                weights[word] = weights.get(word, 0) + 1
-            self._store.set_setting("keyword_weights", weights)
-            self._store.set_setting("vips", sorted(vips))
+            self._store.set_sender_profile(
+                item.sender_addr, is_automated=True, expects_reply=False,
+                importance_hint="low", reason="you marked their mail not important",
+                decided_by="click", pinned=True)
+        elif kind == "more_important":
+            self._store.set_sender_profile(
+                item.sender_addr, is_automated=False, expects_reply=True,
+                importance_hint="high", reason="you raised their importance",
+                decided_by="click", pinned=True)
+        # more_urgent / less_urgent say something about this message's timing, not
+        # about the sender, so they teach the keyword weights and nothing else.
+
+    def forget_sender(self, addr: str) -> dict:
+        """Undo what a click or the classifier learned about one sender."""
+        self._store.forget_sender(addr)
+        self._reflag()
+        return {"senders": self._store.sender_profiles()}
+
+    def learned_senders(self) -> list[dict]:
+        rows = list(self._store.sender_profiles().values())
+        rows.sort(key=lambda r: (not r["pinned"], r["addr"]))
+        return rows
 
     # ── chat ────────────────────────────────────────────────────────────────
 

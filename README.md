@@ -4,7 +4,7 @@ A local-first desktop command center for one person's work day: Outlook mail and
 calendar, Slack, two-axis importance/urgency flags, per-item chat, daily summaries,
 and a shortcuts panel. One Python codebase, Windows and macOS, **no npm**.
 
-Phases 1 to 3 of 11 are complete: the whole UI on fixtures, plus a real read-only
+Phases 1, 2, 3 and 5 of 11 are complete: the whole UI on fixtures, plus a real read-only
 calendar and real mail — triage, needs-reply detection and drafts in your own
 voice — through the connectors your organization already approved.
 
@@ -67,21 +67,42 @@ the real cadence, the next sweep and the measured round-trip.
 ```
 
 ```bash
+.\.venv\Scripts\python.exe -m tests.test_phase3
+```
+
+```bash
+.\.venv\Scripts\python.exe -m tests.test_phase5
+```
+
+Needs a display:
+
+```bash
 .\.venv\Scripts\python.exe -m tests.smoke_window
 ```
+
+Needs the connectors and reads your own data. Minutes, not seconds:
 
 ```bash
 .\.venv\Scripts\python.exe -m tests.live_calendar --prep
 ```
 
+```bash
+.\.venv\Scripts\python.exe -m tests.live_mail --draft
+```
+
+```bash
+.\.venv\Scripts\python.exe -m tests.live_classify
+```
+
 `test_flags` (64 checks) covers the flag rules, including that a message cannot
 influence its own flag. `test_api` (54 checks) covers the bridge, the approval gate
-and the JS surface. `test_phase2` (104 checks) covers connector parsing, hostile
+and the JS surface. `test_phase2` (134 checks) covers connector parsing, hostile
 input, polling cadence and the tool allowlists. `smoke_window` opens the real
 windows, drives the UI and reads the rendered DOM back — it needs a display.
 `test_phase3` (154 checks) covers mail parsing, needs-reply, waiting-on and the voice
-profile. `live_calendar` and `live_mail` do one real sweep each against your own data
-— they need the connectors and take minutes.
+profile. `test_phase5` (72 checks) covers stage-2 classification, its caching, and
+the two limits above. `live_calendar`, `live_mail` and `live_classify` each do one real pass against your
+own data.
 
 ## What phase 1 gives you
 
@@ -112,6 +133,20 @@ Press `?` in the panel for the full list.
 | `j` `k` | move through the focus queue |
 | `r` `e` `s` `d` | reply, done, snooze, delegate |
 | `?` | keyboard overlay |
+
+## What phase 5 adds
+
+- **Stage 2**: Claude judges the items the rules could not settle, batched, with a
+  confidence shown in the tooltip
+- **Importance only.** Stage 2 can never set urgency — that stays with the calendar,
+  parsed deadlines and thread state. Enforced in code, not by prompt wording.
+- **No body is sent.** The payload is built from a named allowlist of metadata
+  fields, and stage 2 is given no tools at all.
+- **A sender is judged once.** The verdict is remembered, so the hundredth message
+  from `health@aws.com` costs nothing. This replaces the hardcoded pattern list.
+- **A click outranks any model**, permanently. "Not important" on a sender teaches
+  HELM for good, and no classifier can undo it. Settings lists everything it has
+  learned, with a Forget button on each row.
 
 ## What phase 3 adds
 
@@ -146,9 +181,7 @@ Press `?` in the panel for the full list.
 - **Slack chat is still scripted.** Mail drafts and calendar prep briefs are live;
   Slack is phase 4, and the drawer says so rather than passing a canned answer off
   as a reasoned one.
-- **Automated senders are caught by a pattern list.** The real inbox is mostly
-  `approvals@`, `health@aws`, `service-now` and similar, and each new one needs a
-  pattern or a mute. Phase 5 sends genuinely ambiguous senders to Claude.
+- **Phase 4 (Slack) is not built.** It reports `unavailable` and names its phase.
 - **Threads group by subject.** The connector returns an empty conversation id for
   every message, so HELM strips `Re:`/`FW:` and groups on what is left — the way mail
   clients did before conversation ids existed. Two unrelated threads that share a

@@ -19,6 +19,7 @@ const st = {
   hotkeys: {},
   schedule: {},
   voice: '',
+  senders: [],
   openItem: null,
   detail: null,
 };
@@ -87,6 +88,7 @@ async function refresh() {
   st.hotkeys = boot.hotkeys || {};
   st.schedule = boot.schedule || {};
   st.voice = boot.voice || '';
+  st.senders = boot.senders || [];
   render();
 }
 
@@ -387,6 +389,24 @@ document.addEventListener('click', async (e) => {
     const btn = t.closest('#resync');
     btn.textContent = 'Refreshing…';
     await call('resync');
+    await refresh();
+    return undefined;
+  }
+
+  const forget = t.closest('[data-forget]');
+  if (forget) {
+    const res = await call('forget_sender', forget.dataset.forget);
+    if (res) await refresh();
+    return undefined;
+  }
+
+  if (t.closest('#classify-now')) {
+    el('classify-msg').textContent = 'Asking about the unclear ones… about 2 minutes.';
+    const res = await call('classify_ambiguous');
+    el('classify-msg').textContent = res?.error
+      ? res.error
+      : res?.skipped || res?.note
+        || `Asked about ${res.asked}, got ${res.answered} back, ${res.changed} changed.`;
     await refresh();
     return undefined;
   }

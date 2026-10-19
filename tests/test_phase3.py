@@ -392,6 +392,11 @@ def test_sweep_maps_inbox_and_sent(monkeypatched=None) -> None:
 
     check("it made one connector call", len(fake.calls) == 1, str(len(fake.calls)))
     check("with only read tools", fake.calls[0][1] == cli.MAIL_READ)
+    # Three live sweeps measured 197 s, 232 s and 242 s. The shared 240 s default
+    # timed out on the third and reported an empty inbox.
+    check("the mail sweep has its own, larger timeout",
+          ms.MailSource.SWEEP_TIMEOUT > cli.ONE_SHOT_TIMEOUT,
+          f"{ms.MailSource.SWEEP_TIMEOUT} vs {cli.ONE_SHOT_TIMEOUT}")
     check("three inbox rows came back", len(items) == 3, str(len(items)))
 
     by_id = {i.id: i for i in items}

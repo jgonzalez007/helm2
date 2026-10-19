@@ -58,6 +58,9 @@ class Settings:
     internal_domains: set[str] = field(default_factory=set)
     # Learned locally from "not important" / "more urgent" clicks.
     keyword_weights: dict[str, int] = field(default_factory=dict)
+    # What HELM has learned about individual senders, from a click or from stage 2.
+    # Keyed by lowercase address. See store.sender_profile.
+    sender_profiles: dict[str, dict] = field(default_factory=dict)
     waiting_days: int = 3
 
     def normalized(self) -> "Settings":
@@ -69,6 +72,7 @@ class Settings:
             muted_channels=low(self.muted_channels),
             internal_domains=low(self.internal_domains),
             keyword_weights={k.lower(): v for k, v in self.keyword_weights.items()},
+            sender_profiles={k.lower(): v for k, v in self.sender_profiles.items()},
             waiting_days=self.waiting_days,
         )
 
@@ -92,6 +96,7 @@ def _signals(item: Item, cfg: Settings, now: datetime) -> dict:
     subject_deadline = _deadline_from_subject(item.subject, now)
     deadline = _parse(item.deadline_at) or subject_deadline
 
+    profile = cfg.sender_profiles.get(addr) or {}
     starts = _parse(item.starts_at)
     sent = _parse(item.sent_by_me_at)
     reply = _parse(item.last_reply_at)
@@ -112,6 +117,13 @@ def _signals(item: Item, cfg: Settings, now: datetime) -> dict:
             (item.organizer_is_me and item.attendees) or item.presenter_is_me),
         "solo_block": bool(item.organizer_is_me and not item.attendees),
         "external_attendees": bool(item.external_attendees),
+        # Learned once, applied free thereafter. This is what replaces guessing
+        # from an address pattern on every sweep.
+        "known_automated": bool(profile.get("is_automated")),
+        "known_expects_reply": bool(profile.get("expects_reply", True)),
+        "known_importance": str(profile.get("importance_hint") or ""),
+        "known_pinned": bool(profile.get("pinned")),
+        "known_reason": str(profile.get("reason") or ""),
         "all_day": bool(item.all_day),
         "rsvp_pending": bool(item.rsvp_pending),
         "has_agenda": bool(item.has_agenda),
@@ -197,7 +209,17 @@ def _score(sig: dict) -> tuple[str, str, list[dict], bool]:
     confident = False
 
     # ── Importance ──────────────────────────────────────────────────────────
-    if sig["is_muted"]:
+    if sig["known_pinned"]:
+        importance = sig["known_importance"] or ("low" if sig["known_automated"] else "normal")
+        reasons.append({"rule": "your_override",
+                        "detail": sig["known_reason"] or "you set this sender yourself"})
+        confident = True
+    elif sig["known_automated"]:
+        importance = sig["known_importance"] or "low"
+        reasons.append({"rule": "known_sender",
+                        "detail": sig["known_reason"] or "a system or digest sender"})
+        confident = True
+    elif sig["is_muted"]:
         importance = "low"
         reasons.append({"rule": "muted", "detail": "sender or channel is muted"})
         confident = True

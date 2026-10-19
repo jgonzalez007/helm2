@@ -271,13 +271,27 @@ def _clean_sent(raw, me: str) -> dict | None:
     }
 
 
-def needs_reply(item: Item, replied_conversations: set[str]) -> tuple[bool, str]:
+def needs_reply(item: Item, replied_conversations: set[str],
+                profiles: dict[str, dict] | None = None) -> tuple[bool, str]:
     """Structural only. Returns (needs_reply, the reason to show).
 
     Message content is not consulted. A thread needs a reply because of who sent the
     last message and whether you were asked, not because of any phrase in it.
+
+    What HELM has already learned about the sender is checked first: a click or a
+    stage-2 verdict is more reliable than guessing from the shape of an address, and
+    costs nothing to apply.
     """
-    if item.sender_addr and item.sender_addr.lower().startswith(("postmaster@", "mailer-daemon@")):
+    addr = (item.sender_addr or "").lower()
+    profile = (profiles or {}).get(addr) or {}
+    if profile.get("pinned"):
+        if not profile.get("expects_reply", True):
+            return False, profile.get("reason") or "you told HELM this sender needs no reply"
+        return True, profile.get("reason") or "you marked this sender as one you answer"
+    if profile.get("is_automated") or not profile.get("expects_reply", True):
+        return False, profile.get("reason") or "a system or digest sender"
+
+    if addr.startswith(("postmaster@", "mailer-daemon@")):
         return False, "bounce notification"
     if _is_bulk(item.sender_addr):
         return False, "bulk or no-reply address"
@@ -351,9 +365,14 @@ class MailSource:
     # per message. The drawer fetches it when you open the item.
     prefetch_threads = False
 
+    # Measured sweeps: 197 s, 232 s, 242 s. The shared 240 s default was marginal and
+    # the third run timed out, reporting an empty inbox. Mail gets its own ceiling
+    # and a smaller inbox page: 15 recent messages is more than a triage pass needs.
+    SWEEP_TIMEOUT = 420
+
     def __init__(self, me: str, internal_domains: Iterable[str],
                  availability: cli.Availability | None = None,
-                 store=None, inbox_limit: int = 25, sent_limit: int = 15) -> None:
+                 store=None, inbox_limit: int = 15, sent_limit: int = 12) -> None:
         self.me = me
         self.internal_domains = list(internal_domains)
         self.availability = availability
@@ -383,7 +402,8 @@ class MailSource:
 
         prompt = MAIL_PROMPT.format(inbox_limit=self.inbox_limit, sent_limit=self.sent_limit)
         try:
-            reply, elapsed = cli.run_once(prompt, cli.MAIL_READ)
+            reply, elapsed = cli.run_once(prompt, cli.MAIL_READ,
+                                          timeout=self.SWEEP_TIMEOUT)
         except cli.ClaudeUnavailable as e:
             self._status = SourceStatus(source=self.name, health="reconnecting",
                                         last_error=str(e)[:300],
@@ -419,8 +439,9 @@ class MailSource:
         # Anything you have replied to in the sent list is not awaiting you.
         self._replied = {m["conversation_id"] for m in sent if m["conversation_id"]}
         self._reply_reasons = {}
+        profiles = self._store.sender_profiles() if self._store is not None else {}
         for item in inbox:
-            wanted, reason = needs_reply(item, self._replied)
+            wanted, reason = needs_reply(item, self._replied, profiles)
             self._reply_reasons[item.id] = reason
             if not wanted:
                 item.state = "done" if item.thread_id in self._replied else "working"

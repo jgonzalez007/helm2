@@ -128,13 +128,19 @@ mcp__claude_ai_Slack__slack_read_channel
 | resident process, warm turn, text only | 11.1 s |
 | resident process, warm turn, with connector call | 29.7 s |
 | calendar sweep, 25 events (phase 2, measured live) | 124–144 s |
-| mail sweep, inbox + sent, two tool calls (phase 3) | 197–232 s |
+| mail sweep, 15 inbox + 12 sent, two tool calls | 171 s (was 197–242 s at page 25) |
+| stage-2 batch, 3 items, no tools (phase 5) | 75 s |
 | mail thread fetch, on open (phase 3) | 70 s |
 | mail draft, cold session | 34 s |
 | mail draft, warm session | 4.6 s |
 | prep brief, cold session | 46 s |
 | prep brief follow-up, warm session | 7.6 s |
 | meeting countdown (local timer) | < 1 ms |
+
+A mail sweep measured 197 s, 232 s and **242 s** against the shared 240 s timeout,
+and the third run timed out and reported an empty inbox. `MailSource.SWEEP_TIMEOUT`
+is 420 s and the inbox page is 15, not 25. Any new source whose sweep approaches the
+default needs its own ceiling, not a hope that it stays fast.
 
 HELM is a 2–5 minute refresh tool with exact meeting countdowns. It is **not** a
 seconds-latency notifier. The UI must say "4m ago", never imply live.
@@ -170,6 +176,35 @@ Non-negotiable. A change that weakens one of these is a bug regardless of what i
   reorders the queue.
 - Flags affect ordering, badges and whether the island may interrupt. A flag has no
   path to an action.
+
+### Stage 2 decides importance only — never urgency
+
+`classifier.py` asks Claude about items the rules could not settle. Three limits,
+and a change that weakens any of them is a bug:
+
+1. **It never sets urgency.** Urgency comes from calendar times, parsed deadlines
+   and thread state: structured, local, free. `classifier.apply()` writes importance
+   and restores urgency afterwards, so even a future edit that lets a verdict carry
+   urgency cannot land it.
+2. **No message body is sent.** `classifier.PAYLOAD_FIELDS` is an allowlist, not an
+   exclusion list. The subject goes (the brief lists topic keywords as a legitimate
+   importance signal, and a subject is a structured field); `snippet` never does.
+3. **It is given no tools at all.** `classify_batch` passes an empty allowlist. It is
+   a judgement about metadata already in hand, so the model has nothing to look up
+   and no way to reach the mailbox.
+
+`tests/test_phase5.py` asserts all three, including that a planted body marker never
+appears in the rendered prompt.
+
+### A sender is classified once, and a click outranks any model
+
+`store.sender_profile` is HELM's memory about a sender. Stage 1 consults it for free,
+which is why the same message from `health@aws.com` is never paid for twice, and it
+is the durable replacement for `mail_source.BULK_HINTS`.
+
+A row with `pinned = 1` came from the user clicking an override.
+`set_sender_profile` refuses to overwrite one unless the caller also pins, so no
+classifier can undo a click. Only `forget_sender` clears it.
 
 ### The tool allowlist is the real defence
 

@@ -151,6 +151,18 @@ CREATE TABLE IF NOT EXISTS source_state (
   measured_latency_ms INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS sender_profile (
+  addr TEXT PRIMARY KEY,
+  is_automated INTEGER NOT NULL DEFAULT 0,
+  expects_reply INTEGER NOT NULL DEFAULT 1,
+  importance_hint TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  decided_by TEXT NOT NULL DEFAULT 'rules',
+  confidence REAL,
+  decided_at TEXT NOT NULL DEFAULT '',
+  pinned INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS setting (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -486,6 +498,53 @@ class Store:
         rows = self._conn().execute(
             "SELECT source,health,last_ok_at,last_error,measured_latency_ms FROM source_state")
         return [dict(r) for r in rows]
+
+    # ── sender profiles ─────────────────────────────────────────────────────
+    #
+    # What HELM has learned about a sender, so the same question is never asked
+    # twice. A `pinned` row came from the user clicking an override and is never
+    # overwritten by a classifier.
+
+    def sender_profile(self, addr: str) -> dict | None:
+        row = self._conn().execute(
+            "SELECT * FROM sender_profile WHERE addr=?", ((addr or "").lower(),)).fetchone()
+        return dict(row) if row else None
+
+    def sender_profiles(self) -> dict[str, dict]:
+        return {r["addr"]: dict(r)
+                for r in self._conn().execute("SELECT * FROM sender_profile")}
+
+    def set_sender_profile(self, addr: str, *, is_automated: bool | None = None,
+                           expects_reply: bool | None = None,
+                           importance_hint: str | None = None, reason: str = "",
+                           decided_by: str = "rules", confidence: float | None = None,
+                           pinned: bool = False) -> None:
+        addr = (addr or "").lower()
+        if not addr:
+            return
+        existing = self.sender_profile(addr) or {}
+        # A pinned row is the user's own decision. Only another click may change it.
+        if existing.get("pinned") and not pinned:
+            return
+        self._conn().execute(
+            "INSERT INTO sender_profile(addr,is_automated,expects_reply,importance_hint,"
+            "reason,decided_by,confidence,decided_at,pinned) VALUES(?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(addr) DO UPDATE SET is_automated=excluded.is_automated,"
+            "expects_reply=excluded.expects_reply,importance_hint=excluded.importance_hint,"
+            "reason=excluded.reason,decided_by=excluded.decided_by,"
+            "confidence=excluded.confidence,decided_at=excluded.decided_at,"
+            "pinned=excluded.pinned",
+            (addr,
+             int(existing.get("is_automated", 0) if is_automated is None else is_automated),
+             int(existing.get("expects_reply", 1) if expects_reply is None else expects_reply),
+             importance_hint if importance_hint is not None
+             else existing.get("importance_hint", ""),
+             reason or existing.get("reason", ""),
+             decided_by, confidence, now_iso(), int(pinned or existing.get("pinned", 0))))
+
+    def forget_sender(self, addr: str) -> None:
+        self._conn().execute("DELETE FROM sender_profile WHERE addr=?",
+                             ((addr or "").lower(),))
 
     def reset_demo(self) -> None:
         """Wipe everything a demo run created, keeping user settings and shortcuts."""
