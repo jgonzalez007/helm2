@@ -64,17 +64,24 @@ export function greeting(d = new Date()) {
   return 'Evening';
 }
 
-/** "live" / "4m ago" / "unavailable" — never something that implies fresher than it is. */
+/** How old the data is, always stated.
+ *
+ * A polled source is never labelled "live", however recently it synced — HELM
+ * refreshes every 2 to 5 minutes, and a word that implies otherwise is the one
+ * lie that would make the whole panel untrustworthy. The dot carries connection
+ * state; this text carries age. */
 export function freshness(state) {
   if (!state) return 'no data';
   if (state.health === 'unavailable') return 'unavailable';
   if (state.health === 'demo') return 'demo data';
-  if (state.health === 'reconnecting') return 'reconnecting';
-  if (!state.last_ok_at) return 'never synced';
+  if (!state.last_ok_at) {
+    return state.health === 'reconnecting' ? 'reconnecting' : 'never synced';
+  }
   const age = Date.now() - Date.parse(state.last_ok_at);
   if (Number.isNaN(age)) return 'unknown';
-  if (age < 90_000) return 'live';
-  return `${rel(state.last_ok_at)} ago`;
+  const stamp = age < 60_000 ? 'just now' : `${rel(state.last_ok_at)} ago`;
+  // A failing source still shows the age of what you are looking at.
+  return state.health === 'reconnecting' ? `reconnecting · ${stamp}` : stamp;
 }
 
 export function badgePair(flag) {

@@ -106,8 +106,13 @@ def _signals(item: Item, cfg: Settings, now: datetime) -> dict:
         "is_external": bool(item.sender_external or (domain and domain not in cfg.internal_domains)),
         "to_me_direct": bool(item.to_me_direct),
         "direct_ping": item.kind in ("dm", "mention"),
-        "organizer_or_presenter": bool(item.organizer_is_me or item.presenter_is_me),
+        # Organizing something with nobody else in it is a focus block, not a
+        # meeting; it should not outrank a real one in the queue.
+        "organizer_or_presenter": bool(
+            (item.organizer_is_me and item.attendees) or item.presenter_is_me),
+        "solo_block": bool(item.organizer_is_me and not item.attendees),
         "external_attendees": bool(item.external_attendees),
+        "all_day": bool(item.all_day),
         "rsvp_pending": bool(item.rsvp_pending),
         "has_agenda": bool(item.has_agenda),
         "has_conflict": bool(item.conflicts_with),
@@ -233,7 +238,9 @@ def _score(sig: dict) -> tuple[str, str, list[dict], bool]:
             confident = True
 
     # ── Urgency ─────────────────────────────────────────────────────────────
-    mins = sig["minutes_to_start"]
+    # An all-day block is an absence, not a meeting: no countdown urgency,
+    # no agenda gap, no RSVP gap.
+    mins = None if sig["all_day"] else sig["minutes_to_start"]
     if mins is not None and 0 <= mins <= 15:
         urgency = "now"
         reasons.append({"rule": "meeting_imminent", "detail": f"starts in {int(mins)} min"})

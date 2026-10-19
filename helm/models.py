@@ -47,6 +47,7 @@ class Item:
     presenter_is_me: bool = False
     rsvp_pending: bool = False
     has_agenda: bool = True
+    all_day: bool = False
     attendees: list[str] = field(default_factory=list)
     external_attendees: bool = False
     join_url: str = ""

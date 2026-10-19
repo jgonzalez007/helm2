@@ -65,7 +65,8 @@ function filterBar(filter) {
 
 function nextMeeting(rows) {
   return rows
-    .filter((r) => r.item.source === 'calendar' && Date.parse(r.item.starts_at) > Date.now())
+    .filter((r) => r.item.source === 'calendar' && !r.item.all_day
+      && Date.parse(r.item.starts_at) > Date.now())
     .sort((a, b) => Date.parse(a.item.starts_at) - Date.parse(b.item.starts_at))[0] || null;
 }
 
@@ -323,8 +324,20 @@ export function viewShortcuts(st) {
 
 // ── Settings ──────────────────────────────────────────────────────────────
 
+/** Demo mode never probes the connectors, so it reports "not checked" rather than
+ *  "not connected" — claiming a failure HELM did not observe is still a lie. */
+function connectorRow(label, sched, present, note, yes, no) {
+  const state = sched.demo ? 'demo' : (present ? 'live' : 'unavailable');
+  const text = sched.demo ? 'not checked in demo mode' : (present ? yes : no);
+  return `<div class="field">
+    <label>${esc(label)}<small>${esc(note)}</small></label>
+    <span class="status"><span class="dot dot--${state}"></span>${esc(text)}</span>
+  </div>`;
+}
+
 export function viewSettings(st) {
   const s = st.settings || {};
+  const sched = st.schedule || {};
   const sel = (key, options, value) => `<select data-set="${key}">${
     options.map(([v, l]) => `<option value="${v}" ${v === value ? 'selected' : ''}>${l}</option>`)
       .join('')}</select>`;
@@ -338,13 +351,43 @@ export function viewSettings(st) {
 
     <div class="card">
       <h3>Accounts</h3>
-      <p>HELM stores no Microsoft or Slack credential. It uses the connectors already
-        approved on this machine.</p>
-      ${(st.sources || []).map((src) => `<div class="field">
-        <label>${esc(src.source)}<small>${esc(src.last_error || 'no errors')}</small></label>
+      <p>HELM stores no Microsoft or Slack credential. It shells out to the
+        <code>claude</code> CLI, which is already authenticated as you through the
+        connectors your organization approved.</p>
+      ${connectorRow('claude CLI', sched, sched.availability?.cli,
+    'the only thing that touches your mail and Slack', 'found', 'not found')}
+      ${connectorRow('Microsoft 365 connector', sched, sched.availability?.microsoft_365,
+    'calendar now, mail from phase 3', 'connected', 'not connected')}
+      ${connectorRow('Slack connector', sched, sched.availability?.slack,
+    'used from phase 4', 'connected', 'not connected')}
+      ${sched.availability?.error
+    ? `<div class="field"><label>Last error<small>${esc(sched.availability.error)}</small>
+        </label></div>` : ''}
+    </div>
+
+    <div class="card">
+      <h3>Sources and refresh cadence</h3>
+      <p>${sched.demo
+    ? 'Demo mode reads fixtures, so nothing is polled and nothing is fetched.'
+    : `A sweep is a model turn with a real token cost, so the cadence is the main
+       cost control. Currently ${sched.work_time ? 'work hours' : 'off hours'}.`}
+        ${sched.paused ? `<b>Paused: ${esc(sched.paused)}.</b>` : ''}</p>
+      ${(st.sources || []).map((src) => {
+    const row = sched.sources?.[src.source] || {};
+    const cadence = row.interval_s ? `every ${Math.round(row.interval_s / 60)} min` : '—';
+    const next = row.next_in_s != null ? `, next in ${row.next_in_s}s` : '';
+    const back = row.backoff_s ? `, backing off ${row.backoff_s}s` : '';
+    return `<div class="field">
+        <label>${esc(src.source)}<small>${esc(src.last_error
+      || `${cadence}${next}${back} · last round-trip ${src.measured_latency_ms} ms`)}</small>
+        </label>
         <span class="status"><span class="dot dot--${esc(src.health)}"></span>
           ${esc(freshness(src))}</span>
-      </div>`).join('')}
+      </div>`;
+  }).join('')}
+      <div class="nextup-actions" style="margin-top:12px">
+        <button class="btn" id="resync">Refresh now</button>
+      </div>
     </div>
 
     <div class="card">

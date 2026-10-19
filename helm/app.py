@@ -15,13 +15,20 @@ from pathlib import Path
 
 import webview
 
+from . import claude_cli as cli
 from . import flags as flagmod
 from .bus import EventBus
+from .connectors.base import SendRefused
+from .connectors.claude_source import CalendarSource
 from .connectors.demo import DEMO_SETTINGS, DemoSource
+from .connectors.pending import PendingSource
 from .hotkeys import BINDINGS, Hotkeys
-from .models import ApprovalToken, Flag, Item, now_iso
+from .models import ApprovalToken, Flag, Item, SourceStatus, now_iso
+from .scheduler import Scheduler
 from .store import Store
 from .tray import Tray
+
+ME = "jose.gonzalez@sailpoint.com"
 
 UI = Path(__file__).resolve().parent.parent / "ui"
 
@@ -39,14 +46,29 @@ DEFAULT_SHORTCUTS = [
 class Api:
     """Everything the UI can call. Nothing here sends without an explicit click."""
 
-    def __init__(self, store: Store, bus: EventBus, demo: bool) -> None:
+    def __init__(self, store: Store, bus: EventBus, demo: bool,
+                 availability: cli.Availability | None = None) -> None:
         self._store = store
         self._bus = bus
         self._demo = demo
-        self._sources = {n: DemoSource(n) for n in ("mail", "slack", "calendar")}
+        self._availability = availability or cli.Availability()
+        self._sources = self._build_sources()
+        self._scheduler: Scheduler | None = None
         self._island = None
         self._panel = None
         self._chat_lock = threading.Lock()
+
+    def _build_sources(self) -> dict:
+        if self._demo:
+            return {n: DemoSource(n) for n in ("mail", "slack", "calendar")}
+        # Live mode never pads a gap with fixtures: a panel that mixes real and fake
+        # data is worse than one that says a source is not built yet.
+        return {
+            "mail": PendingSource("mail", "phase 3"),
+            "slack": PendingSource("slack", "phase 4"),
+            "calendar": CalendarSource(
+                ME, self._store.get_setting("internal_domains") or [], self._availability),
+        }
 
     # ── windows ─────────────────────────────────────────────────────────────
 
@@ -85,28 +107,88 @@ class Api:
             keyword_weights=dict(s.get("keyword_weights") or {}),
         )
 
-    def sync(self) -> dict:
-        """Pull every source, flag anything unflagged, keep pinned overrides."""
+    def poll(self, source: str) -> bool:
+        """One sweep of one source. Returns False so the scheduler can back off.
+
+        A source that fails keeps the rows it already had and flips its status dot;
+        it never empties the list, because an inbox that looks calm because the
+        connector broke is the one failure that makes the whole panel untrustworthy.
+        """
+        src = self._sources.get(source)
+        if src is None:
+            return False
+
         cfg = self._settings_obj()
-        counts: dict[str, int] = {}
-        for name, src in self._sources.items():
-            t0 = time.perf_counter()
+        t0 = time.perf_counter()
+        try:
             items = src.list_new("")
-            for item in items:
-                self._store.upsert_item(item)
-                existing = self._store.flag(item.id)
-                flag = flagmod.classify(item, cfg, existing=existing)
-                self._store.set_flag(flag)
-                thread = src.get_thread(item.id)
-                if thread.messages:
-                    self._store.set_thread(item.id, thread.messages)
-            st = src.status()
+        except Exception as e:
+            self._store.set_source_status(SourceStatus(
+                source=source, health="reconnecting", last_error=str(e)[:300]))
+            self._bus.publish("source_status", {"source": source, "error": str(e)[:300]})
+            return False
+
+        seen: set[str] = set()
+        for item in items:
+            seen.add(item.id)
+            known = self._store.item(item.id)
+            self._store.upsert_item(item)
+            existing = self._store.flag(item.id)
+            flag = flagmod.classify(item, cfg, existing=existing)
+            self._store.set_flag(flag)
+            thread = src.get_thread(item.id)
+            if thread.messages:
+                self._store.set_thread(item.id, thread.messages)
+            if known is None and source != "calendar":
+                self._bus.publish("new_email" if source == "mail" else "slack_mention",
+                                  {"item_id": item.id, "subject": item.subject})
+
+        # Two-way sync: anything the source stopped returning was handled elsewhere.
+        st = src.status()
+        if st.health == "live":
+            self._retire_missing(source, seen)
+
+        if not st.measured_latency_ms:
             st.measured_latency_ms = int((time.perf_counter() - t0) * 1000)
-            st.count = len([i for i in items if i.state == "needs_me"])
-            self._store.set_source_status(st)
-            counts[name] = st.count
-        self._bus.publish("source_status", {"counts": counts})
+        st.count = len([i for i in items if i.state == "needs_me"])
+        self._store.set_source_status(st)
+        self._bus.publish("source_status", {"source": source, "health": st.health,
+                                            "count": st.count})
+        return st.health in ("live", "demo")
+
+    def _retire_missing(self, source: str, seen: set[str]) -> None:
+        for item in self._store.items(source=source):
+            if item.id not in seen and item.state in ("needs_me", "working"):
+                self._store.set_item_state(item.id, "done", replied_at=now_iso())
+                self._bus.publish("item_changed", {"item_id": item.id, "state": "done"})
+
+    def sync(self) -> dict:
+        """Sweep every source once. Used at launch and by the manual refresh."""
+        counts: dict[str, int] = {}
+        for name in self._sources:
+            self.poll(name)
+            counts[name] = (self._sources[name].status().count or 0)
         return counts
+
+    def resync(self) -> dict:
+        """Manual refresh from the UI."""
+        if self._scheduler is not None:
+            self._scheduler.poke("you asked")
+            return {"ok": True, "queued": True}
+        self.sync()
+        return {"ok": True, "queued": False}
+
+    def schedule_info(self) -> dict:
+        """What Settings shows: the real cadence and the measured latency, not a promise."""
+        info = self._scheduler.describe() if self._scheduler else {"sources": {}}
+        info["availability"] = {
+            "cli": bool(self._availability.cli),
+            "microsoft_365": self._availability.microsoft_365,
+            "slack": self._availability.slack,
+            "error": self._availability.error,
+        }
+        info["demo"] = self._demo
+        return info
 
     def bootstrap(self) -> dict:
         """One call the UI makes on load. Everything it needs to paint."""
@@ -118,6 +200,7 @@ class Api:
             "shortcuts": self._store.shortcuts(),
             "hotkeys": {k: "+".join([v[0], v[1]]) for k, v in BINDINGS.items()},
             "action_log": self._store.action_log(50),
+            "schedule": self.schedule_info(),
         }
 
     def list_items(self) -> list[dict]:
@@ -201,21 +284,55 @@ class Api:
     # ── chat ────────────────────────────────────────────────────────────────
 
     def chat_send(self, item_id: str, text: str) -> dict:
-        """Streams a reply into the drawer. Phase 1 replies are scripted, and say so."""
+        """Streams a reply into the drawer."""
         self._store.add_chat(item_id, "user", text)
         threading.Thread(target=self._stream_reply, args=(item_id, text),
                          daemon=True, name="helm-chat").start()
         return {"streaming": True}
 
     def _stream_reply(self, item_id: str, prompt: str) -> None:
-        reply = DemoSource.scripted_reply(prompt)
         with self._chat_lock:
-            for token in _tokens(reply):
-                self._push(f"helm.onChatToken({json.dumps(item_id)}, {json.dumps(token)})")
-                time.sleep(0.012)
+            def emit(chunk: str) -> None:
+                self._push(f"helm.onChatToken({json.dumps(item_id)}, {json.dumps(chunk)})")
+
+            reply = self._answer(item_id, prompt, emit)
             self._store.add_chat(item_id, "assistant", reply)
             card = self._approval_card(item_id, prompt)
             self._push(f"helm.onChatDone({json.dumps(item_id)}, {json.dumps(card)})")
+
+    def _answer(self, item_id: str, prompt: str, emit) -> str:
+        """Real connector where one is built for this item type, scripted otherwise.
+
+        The fallback says which phase makes it real rather than passing a canned
+        answer off as a reasoned one.
+        """
+        item = self._store.item(item_id)
+        src = self._sources.get(item.source) if item else None
+
+        if item is not None and isinstance(src, CalendarSource) and "prep" in prompt.lower():
+            self._store.log_action("prep_brief", item_id, "calendar", prompt[:200], "started")
+            try:
+                reply = src.prep_brief(item, on_token=emit)
+                self._store.log_action("prep_brief", item_id, "calendar",
+                                       reply[:400], "done")
+                return reply
+            except cli.ClaudeUnavailable as e:
+                msg = (f"Could not reach the connector: {e}\n\n"
+                       "The meeting details above are from the last successful sweep.")
+                emit(msg)
+                self._store.log_action("prep_brief", item_id, "calendar", str(e)[:200],
+                                       "failed")
+                return msg
+
+        reply = DemoSource.scripted_reply(prompt)
+        if not self._demo:
+            reply = (f"{reply}\n\n[Not a real answer: chat for {item.source if item else 'this'} "
+                     "items is scripted until its phase lands. Prep briefs on calendar "
+                     "events are live.]")
+        for token in _tokens(reply):
+            emit(token)
+            time.sleep(0.012)
+        return reply
 
     def _approval_card(self, item_id: str, prompt: str) -> dict | None:
         """Only intents that would write anything produce a card."""
@@ -224,7 +341,12 @@ class Api:
             return None
         item = self._store.item(item_id)
         source = item.source if item else "mail"
-        draft = self._sources[source].draft(item_id, prompt)
+        try:
+            draft = self._sources[source].draft(item_id, prompt)
+        except NotImplementedError:
+            # A read-only source offers no card at all, rather than a card that
+            # would fail on click.
+            return None
         self._store.add_draft(draft)
         self._store.log_action("draft", item_id, source, draft.body, "drafted")
         return {
@@ -245,7 +367,13 @@ class Api:
             return {"error": "unknown draft"}
         token = ApprovalToken.mint_from_click(draft_id)
         source = self._sources.get(draft.channel if draft.channel in self._sources else "mail")
-        result = source.send(draft_id, token)
+        try:
+            result = source.send(draft_id, token)
+        except (SendRefused, NotImplementedError) as e:
+            self._store.log_action("send", draft.to_addr, draft.channel, draft.body,
+                                   "failed", approved_by="click")
+            self._bus.publish("action_logged", {"draft_id": draft_id})
+            return {"error": str(e) or "this source cannot send yet"}
         self._store.log_action("send", draft.to_addr, draft.channel, draft.body,
                               "sent" if result.get("ok") else "failed", approved_by="click")
         self._bus.publish("action_logged", {"draft_id": draft_id})
@@ -327,6 +455,40 @@ class Api:
         self.sync()
         return {"ok": True, "items": self.list_items()}
 
+    # ── meeting alerts ──────────────────────────────────────────────────────
+
+    def watch_meetings(self, tick: float = 20.0) -> None:
+        """Fires meeting_in_5 off a local timer: exact, free, and right offline.
+
+        Only meetings are allowed to interrupt on a timer. Everything else waits for
+        its sweep, because a notification HELM cannot be sure of is worse than none.
+        """
+        warned: set[str] = set()
+        while self._scheduler is None or not self._scheduler._stop.is_set():
+            now = datetime.now().astimezone()
+            for item in self._store.items(source="calendar"):
+                if item.id in warned or not item.starts_at:
+                    continue
+                try:
+                    starts = datetime.fromisoformat(item.starts_at)
+                except ValueError:
+                    continue
+                minutes = (starts - now).total_seconds() / 60
+                if 0 < minutes <= 5:
+                    warned.add(item.id)
+                    self._bus.publish("meeting_in_5", {
+                        "item_id": item.id, "subject": item.subject,
+                        "starts_at": item.starts_at, "join_url": item.join_url})
+            time.sleep(tick)
+
+    def close(self) -> None:
+        for src in self._sources.values():
+            if hasattr(src, "close"):
+                try:
+                    src.close()
+                except Exception:
+                    pass
+
     # ── bridge plumbing ─────────────────────────────────────────────────────
 
     def _push(self, js: str) -> None:
@@ -372,7 +534,17 @@ def _tokens(text: str):
 def run(demo: bool = True, db_path: str | None = None) -> None:
     store = Store(db_path)
     bus = EventBus()
-    api = Api(store, bus, demo)
+
+    availability = cli.Availability()
+    if not demo:
+        # ~20 s, so once at launch and never on a hot path.
+        print("[helm] checking connectors…")
+        availability = cli.probe_availability()
+        for which in ("Microsoft 365", "Slack"):
+            reason = availability.reason(which)
+            print(f"[helm] {which}: {'connected' if not reason else reason}")
+
+    api = Api(store, bus, demo, availability)
 
     if not store.shortcuts():
         for label, url, group in DEFAULT_SHORTCUTS:
@@ -382,7 +554,10 @@ def run(demo: bool = True, db_path: str | None = None) -> None:
         for key, value in DEMO_SETTINGS.items():
             store.set_setting(key, value)
 
-    api.sync()
+    # Live sweeps take 66-97 s each, so launch paints from the last sync and the
+    # scheduler fills in. Demo fixtures are instant, so they load up front.
+    if demo:
+        api.sync()
 
     api._island = webview.create_window(
         "HELM", str(UI / "island.html"), js_api=api,
@@ -403,9 +578,17 @@ def run(demo: bool = True, db_path: str | None = None) -> None:
     keys.on("focus_queue", lambda: (api.open_panel(), api._push("helm.go('focus')")))
     keys.on("panic", lambda: api._push("helm.panic()"))
 
+    scheduler = Scheduler(
+        bus, api.poll, tuple(api._sources),
+        quiet=lambda: (store.get_setting("quiet_hours", {}).get("start", "19:00"),
+                       store.get_setting("quiet_hours", {}).get("end", "07:00")))
+    api._scheduler = scheduler
+
     def quit_app() -> None:
+        scheduler.stop()
         keys.stop()
         tray.stop()
+        api.close()
         for w in (api._island, api._panel):
             try:
                 w.destroy()
@@ -418,10 +601,15 @@ def run(demo: bool = True, db_path: str | None = None) -> None:
                    on_settings=lambda: (api.open_panel(), api._push("helm.go('settings')")),
                    on_quit=quit_app)
         keys.start()
+        if not demo:
+            scheduler.start()
+            threading.Thread(target=api.watch_meetings, daemon=True,
+                             name="helm-meetings").start()
 
     webview.start(start_background, private_mode=False,
                   storage_path=str(Store(db_path).path.parent / "webview"),
                   debug=False)
+    quit_app()
 
 
 def _island_x() -> int:

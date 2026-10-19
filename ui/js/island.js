@@ -70,7 +70,8 @@ const ICONS = {
 
 function nextMeeting() {
   const upcoming = rows
-    .filter((r) => r.item.source === 'calendar' && Date.parse(r.item.starts_at) > Date.now())
+    .filter((r) => r.item.source === 'calendar' && !r.item.all_day
+      && Date.parse(r.item.starts_at) > Date.now())
     .sort((a, b) => Date.parse(a.item.starts_at) - Date.parse(b.item.starts_at));
   return upcoming[0] || null;
 }

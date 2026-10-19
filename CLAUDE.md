@@ -20,13 +20,46 @@ python3 -m venv .venv
 ./.venv/bin/python run.py --demo
 ```
 
-Self-check (no window, no network, no accounts):
+Real calendar through the approved connectors:
+
+```bash
+.\.venv\Scripts\python.exe run.py --live
+```
+
+What the connectors can actually do right now:
+
+```bash
+.\.venv\Scripts\python.exe run.py --check
+```
+
+Self-checks (no window, no network, no accounts):
 
 ```bash
 .\.venv\Scripts\python.exe -m tests.test_flags
 ```
 
-`--demo` is the default until phase 2. `run.py --live` will opt into real sources.
+```bash
+.\.venv\Scripts\python.exe -m tests.test_api
+```
+
+```bash
+.\.venv\Scripts\python.exe -m tests.test_phase2
+```
+
+Needs a display:
+
+```bash
+.\.venv\Scripts\python.exe -m tests.smoke_window
+```
+
+Needs the real connectors, reads the real calendar, takes 1-3 minutes:
+
+```bash
+.\.venv\Scripts\python.exe -m tests.live_calendar --prep
+```
+
+`--demo` is the default. `--live` gives the real calendar; mail and Slack report
+`unavailable` until phases 3 and 4.
 
 ## NO NPM. EVER.
 
@@ -86,6 +119,9 @@ mcp__claude_ai_Slack__slack_read_channel
 | resident `stream-json` process, cold first turn | 40.6 s |
 | resident process, warm turn, text only | 11.1 s |
 | resident process, warm turn, with connector call | 29.7 s |
+| calendar sweep, 25 events (phase 2, measured live) | 124–144 s |
+| prep brief, cold session | 46 s |
+| prep brief follow-up, warm session | 7.6 s |
 | meeting countdown (local timer) | < 1 ms |
 
 HELM is a 2–5 minute refresh tool with exact meeting countdowns. It is **not** a
@@ -122,6 +158,37 @@ Non-negotiable. A change that weakens one of these is a bug regardless of what i
   reorders the queue.
 - Flags affect ordering, badges and whether the island may interrupt. A flag has no
   path to an action.
+
+### The tool allowlist is the real defence
+
+Prompt wording is the weakest control in this app. The one that actually holds is
+`--allowedTools`: every connector call names only the read-only tools that request
+needs, and headless mode denies everything else. Even a fully hijacked agent cannot
+send mail, post to Slack or RSVP, because those tools were never available to it.
+
+- `claude_cli.WRITE_TOOLS` is never allowlisted by anything. It is passed as
+  `--disallowedTools` on every call, so a future allowlist mistake still cannot
+  reach it.
+- Writes go through `Connector.send()` with a clicked `ApprovalToken`. That path is
+  built in phase 10.
+- A new allowlist constant must be covered by `tests/test_phase2.py`, which asserts
+  no read allowlist intersects `WRITE_TOOLS`.
+
+### Everything from a connector is hostile input
+
+A calendar entry, a subject line or an attendee name may have been written by
+anyone. `claude_source._clean_event` coerces every field to its expected type,
+caps every string, bounds every list, and drops a join URL that is not `http(s)`.
+Nothing is eval'd; no returned string is used as a path, command or recipient.
+
+### Never show stale data as live
+
+- A polled source is never labelled "live". `fmt.js freshness()` always states age.
+- A failed sweep keeps the last good rows and flips the status dot. It must never
+  empty a list — an inbox that looks calm because the connector broke is the one
+  failure that makes the whole panel untrustworthy.
+- Live mode never pads a missing source with fixtures. Unbuilt sources report
+  `unavailable` and name their phase.
 
 ### Minimum context
 

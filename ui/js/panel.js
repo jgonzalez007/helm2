@@ -17,6 +17,7 @@ const st = {
   settings: {},
   log: [],
   hotkeys: {},
+  schedule: {},
   openItem: null,
   detail: null,
 };
@@ -83,12 +84,25 @@ async function refresh() {
   st.settings = boot.settings || {};
   st.log = boot.action_log || [];
   st.hotkeys = boot.hotkeys || {};
+  st.schedule = boot.schedule || {};
   render();
 }
 
 on('flag_changed', refresh);
 on('item_changed', refresh);
 on('source_status', refresh);
+on('meeting_in_5', (p) => {
+  // Meetings are allowed to interrupt; everything else only moves a badge.
+  call('open_panel');
+  go('today');
+  const note = document.createElement('div');
+  note.className = 'pill pill--alert';
+  note.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:95';
+  note.textContent = `${p.subject || 'Meeting'} starts in 5 minutes`;
+  document.body.appendChild(note);
+  setTimeout(() => note.remove(), 20_000);
+});
+
 on('action_logged', async () => { st.log = (await call('action_log')) || st.log; render(); });
 
 // ── Tooltips ──────────────────────────────────────────────────────────────
@@ -337,6 +351,14 @@ document.addEventListener('click', async (e) => {
     if (res?.shortcuts) st.shortcuts = res.shortcuts;
     render();
     el('sc-msg').textContent = res ? `Added ${res.added}, skipped ${res.skipped}.` : '';
+    return undefined;
+  }
+
+  if (t.closest('#resync')) {
+    const btn = t.closest('#resync');
+    btn.textContent = 'Refreshing…';
+    await call('resync');
+    await refresh();
     return undefined;
   }
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS item (
   presenter_is_me INTEGER NOT NULL DEFAULT 0,
   rsvp_pending INTEGER NOT NULL DEFAULT 0,
   has_agenda INTEGER NOT NULL DEFAULT 1,
+  all_day INTEGER NOT NULL DEFAULT 0,
   attendees TEXT NOT NULL DEFAULT '[]',
   external_attendees INTEGER NOT NULL DEFAULT 0,
   join_url TEXT NOT NULL DEFAULT '',
@@ -156,7 +158,7 @@ CREATE TABLE IF NOT EXISTS setting (
 
 _JSON_COLS = ("attendees", "conflicts_with")
 _BOOL_COLS = ("sender_external", "to_me_direct", "organizer_is_me", "presenter_is_me",
-              "rsvp_pending", "has_agenda", "external_attendees")
+              "rsvp_pending", "has_agenda", "all_day", "external_attendees")
 
 DEFAULT_SETTINGS = {
     "theme": "system",
@@ -177,6 +179,25 @@ DEFAULT_SETTINGS = {
 }
 
 
+_CREATE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", re.S)
+
+
+def _schema_columns() -> dict[str, dict[str, str]]:
+    """{table: {column: declaration}} read straight from SCHEMA, so the two cannot drift."""
+    tables: dict[str, dict[str, str]] = {}
+    for table, body in _CREATE_RE.findall(SCHEMA):
+        cols: dict[str, str] = {}
+        for line in body.splitlines():
+            line = line.strip().rstrip(",")
+            if not line or line.upper().startswith(("PRIMARY KEY", "FOREIGN KEY", "UNIQUE")):
+                continue
+            name, _, decl = line.partition(" ")
+            if name and decl:
+                cols[name] = decl.strip()
+        tables[table] = cols
+    return tables
+
+
 def data_dir() -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
@@ -195,6 +216,34 @@ class Store:
         self._local = threading.local()
         with self._conn() as c:
             c.executescript(SCHEMA)
+        self._add_missing_columns()
+
+    def _add_missing_columns(self) -> None:
+        """`CREATE TABLE IF NOT EXISTS` never adds a column to an existing database.
+
+        Rather than carry a migration framework, every column declared in SCHEMA with
+        a literal default is added to a table that is missing it. A later phase that
+        adds a field gets the upgrade for free; anything needing a backfill or a type
+        change still needs real thought.
+        """
+        conn = self._conn()
+        for table, columns in _schema_columns().items():
+            try:
+                have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            except sqlite3.OperationalError:
+                continue
+            if not have:
+                continue
+            for name, decl in columns.items():
+                if name in have:
+                    continue
+                if "DEFAULT" not in decl.upper() and "NOT NULL" in decl.upper():
+                    # No safe value for existing rows: a human has to decide.
+                    raise RuntimeError(
+                        f"{table}.{name} is NOT NULL with no default; "
+                        "add a migration rather than letting this pass silently")
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                print(f"[helm] migrated: added {table}.{name}")
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
