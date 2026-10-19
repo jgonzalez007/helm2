@@ -1,0 +1,89 @@
+/* The island: a small always-on-top strip at the top of the screen.
+   Three states — hidden, peek, compact — then a click opens the panel window. */
+
+html, body {
+  background: transparent;
+  overflow: hidden;
+  height: 100%;
+}
+
+#wake {
+  /* Invisible strip that wakes a hidden island, like a notch would. */
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 240px;
+  height: 6px;
+}
+
+.island {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 0;
+  padding: 0 14px;
+  overflow: hidden;
+  background: #101520;
+  color: #e9edf3;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-top: 0;
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  box-shadow: 0 8px 24px -14px rgba(0, 0, 0, .9);
+  font-size: 12.5px;
+  white-space: nowrap;
+  transition: height var(--spring), opacity var(--spring);
+  cursor: pointer;
+}
+
+.island[data-state="hidden"] { height: 0; opacity: 0; }
+.island[data-state="peek"] { height: 26px; opacity: 1; }
+.island[data-state="compact"] { height: 34px; opacity: 1; }
+
+#wheel { width: 20px; height: 20px; flex: 0 0 20px; }
+
+.isl-counts { display: flex; align-items: center; gap: 11px; }
+
+.isl-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #aab3c0;
+  font-variant-numeric: tabular-nums;
+}
+.isl-count b { color: #e9edf3; font-weight: 600; }
+.isl-count[data-hot="1"] b { color: var(--amber); }
+.isl-count svg { width: 13px; height: 13px; opacity: .8; }
+
+.isl-next {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #aab3c0;
+}
+.isl-next b {
+  color: #e9edf3;
+  font: 600 12.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.isl-next .isl-sub {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.island[data-state="peek"] .isl-counts,
+.island[data-state="peek"] .isl-next { display: none; }
+
+.island[data-state="peek"] #wheel { margin: 0 auto; }
+
+/* Professional mode: the character is muted to a plain state dot. */
+body[data-professional="1"] #wheel { opacity: .35; }
+
+body[data-privacy="1"] .island .isl-counts,
+body[data-privacy="1"] .island .isl-next { filter: blur(7px); }

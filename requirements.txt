@@ -1,0 +1,17 @@
+# HELM 2.0 — install into a venv, never globally.
+#
+# pywebview is PINNED. 6.2.1 fails WebView2 init on this machine with
+# E_ABORT 0x80004004 and renders a blank window. See CLAUDE.md.
+pywebview==5.4
+
+# Tray icon + the images it needs.
+pystray==0.19.5
+Pillow
+
+# OS keychain. No Microsoft or Slack credential is ever stored, but anything
+# else that counts as a secret goes here instead of a file.
+keyring
+
+# Windows only: global hotkeys (RegisterHotKey) and the eventual Outlook COM
+# detector. Harmless to omit elsewhere.
+pywin32; sys_platform == "win32"

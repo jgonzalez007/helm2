@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en" data-theme="system" data-density="comfortable">
+<head>
+  <meta charset="utf-8">
+  <title>HELM</title>
+  <link rel="stylesheet" href="css/helm.css">
+  <link rel="stylesheet" href="css/panel.css">
+</head>
+<body data-privacy="0">
+
+<div id="shell">
+  <header id="head">
+    <div id="greeting">HELM</div>
+    <div id="statuses" class="privacy-hide"></div>
+    <button class="btn btn--ghost" id="btn-help" title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts">?</button>
+    <button class="btn btn--ghost" id="btn-settings" aria-label="Settings">⚙</button>
+  </header>
+
+  <nav id="nav" aria-label="Sections"></nav>
+
+  <main id="main" class="privacy-hide" tabindex="-1"></main>
+
+  <footer id="foot">
+    <div id="shortcutbar" class="privacy-hide"></div>
+    <div id="askwrap">
+      <input id="ask" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Ask across mail, Slack and calendar…"
+             aria-label="Ask bar">
+    </div>
+  </footer>
+</div>
+
+<!-- Item detail + chat drawer -->
+<div id="drawer" data-open="0" role="dialog" aria-modal="true" aria-label="Item detail">
+  <section id="detail" class="privacy-hide"></section>
+  <aside id="chatpane">
+    <div class="chat-head">
+      <b>Chat</b>
+      <button class="btn btn--ghost" id="chat-close" aria-label="Close">esc</button>
+    </div>
+    <div id="attached" class="attached privacy-hide"></div>
+    <div id="chatlog" class="privacy-hide" aria-live="polite"></div>
+    <form id="chatform">
+      <input id="chatinput" type="text" autocomplete="off"
+             placeholder="Ask about this item…" aria-label="Message">
+      <button class="btn btn--primary" type="submit">Send</button>
+    </form>
+  </aside>
+</div>
+
+<!-- Keyboard help -->
+<div class="overlay" id="help" data-open="0" role="dialog" aria-modal="true"
+     aria-label="Keyboard shortcuts">
+  <div>
+    <h3>Keyboard</h3>
+    <p>Every action has a key. Press <b>?</b> any time to see this again.</p>
+    <div class="keys" id="keys"></div>
+  </div>
+</div>
+
+<!-- Guided first run -->
+<div class="overlay" id="firstrun" data-open="0" role="dialog" aria-modal="true"
+     aria-label="Welcome to HELM">
+  <div>
+    <h3>HELM is running on sample data</h3>
+    <p>Nothing here is real, nothing can be sent, and no account is connected.</p>
+    <ol class="steps">
+      <li><b>Two flags per item</b><span>Importance (◆ ◇ ·) and urgency (▲ △ ▴ ·) are
+        independent. Hover either badge to see exactly why it was set.</span></li>
+      <li><b>One fixture is a phishing test</b><span>An external "URGENT: action required"
+        message. Its flags stay quiet on purpose — message text can never set its own
+        urgency. Open it to see the warning.</span></li>
+      <li><b>Focus works one item at a time</b><span>Ordered by quadrant.
+        <b>j</b>/<b>k</b> to move, <b>r</b> reply, <b>e</b> done, <b>s</b> snooze.</span></li>
+      <li><b>Nothing sends without your click</b><span>Chat drafts freely; a send,
+        post or RSVP always shows an approval card with the exact recipient first.</span></li>
+      <li><b>Status dots tell the truth</b><span>They say "demo data" here. With real
+        sources they say "live" or "4m ago", and never imply fresher than they are.</span></li>
+    </ol>
+    <button class="btn btn--primary" id="firstrun-done">Start</button>
+  </div>
+</div>
+
+<div id="privacy-banner" aria-live="polite">
+  <div>
+    <strong>HELM hidden</strong>
+    <span>Privacy mode is on. Press Ctrl+Shift+\ to show the panel again.</span>
+  </div>
+</div>
+
+<div id="tooltip" role="tooltip" data-open="0"></div>
+
+<script type="module" src="js/panel.js"></script>
+</body>
+</html>

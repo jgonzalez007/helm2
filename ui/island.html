@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-theme="system" data-density="comfortable">
+<head>
+  <meta charset="utf-8">
+  <title>HELM</title>
+  <link rel="stylesheet" href="css/helm.css">
+  <link rel="stylesheet" href="css/island.css">
+</head>
+<body>
+  <div id="wake" aria-hidden="true"></div>
+
+  <div class="island" id="island" data-state="hidden" role="button" tabindex="0"
+       aria-label="HELM — open the panel">
+    <canvas id="wheel" width="40" height="40" aria-hidden="true"></canvas>
+
+    <div class="isl-counts" id="counts"></div>
+
+    <div class="isl-next" id="next">
+      <span class="isl-sub">no meetings today</span>
+    </div>
+  </div>
+
+  <script type="module" src="js/island.js"></script>
+</body>
+</html>

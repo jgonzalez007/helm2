@@ -1,0 +1,317 @@
+/* HELM design tokens and shared components.
+   No build step: this file is loaded directly by island.html and panel.html.
+
+   State colours are fixed by the spec: amber = waiting on you, blue = working,
+   green = done. The accent is amber because "waiting on you" is the state the
+   whole app exists to clear. */
+
+:root {
+  color-scheme: light dark;
+
+  --amber: #a85b06;
+  --amber-ink: #ffffff;
+  --amber-wash: #fdf1e1;
+  --blue: #1d4ed8;
+  --blue-wash: #e8edfd;
+  --green: #0a6b4a;
+  --green-wash: #e2f4ec;
+  --red: #ab1f1f;
+  --red-wash: #fbeaea;
+
+  --ground: #f3f5f8;
+  --panel: #ffffff;
+  --sunk: #eaeef3;
+  --raised: #ffffff;
+  --ink: #11151c;
+  --body: #3b4350;
+  --mute: #6d7684;
+  --line: #d6dce4;
+  --line-soft: #e7ebf1;
+  --shadow-1: 0 1px 2px rgba(17, 21, 28, .06);
+  --shadow-2: 0 10px 30px -18px rgba(17, 21, 28, .35);
+
+  --r-sm: 6px;
+  --r-md: 9px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+
+  --pad: 16px;
+  --row-h: 44px;
+  --gap: 10px;
+
+  --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont,
+          "Helvetica Neue", sans-serif;
+  --mono: "Cascadia Mono", "SF Mono", ui-monospace, Consolas, monospace;
+
+  --spring: 260ms cubic-bezier(.2, .9, .25, 1);
+}
+
+[data-density="compact"] {
+  --pad: 10px;
+  --row-h: 34px;
+  --gap: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --amber: #e8962c;
+    --amber-ink: #1a1105;
+    --amber-wash: #2a1e0c;
+    --blue: #7ea6ff;
+    --blue-wash: #131d33;
+    --green: #4ec99b;
+    --green-wash: #0c241b;
+    --red: #f08a8a;
+    --red-wash: #2a1416;
+
+    --ground: #0c0f14;
+    --panel: #141921;
+    --sunk: #1b212b;
+    --raised: #1d2430;
+    --ink: #e9edf3;
+    --body: #b4bdc9;
+    --mute: #7b8492;
+    --line: #262e3a;
+    --line-soft: #1f2631;
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .5);
+    --shadow-2: 0 10px 30px -18px rgba(0, 0, 0, .9);
+  }
+}
+
+:root[data-theme="dark"] {
+  --amber: #e8962c;
+  --amber-ink: #1a1105;
+  --amber-wash: #2a1e0c;
+  --blue: #7ea6ff;
+  --blue-wash: #131d33;
+  --green: #4ec99b;
+  --green-wash: #0c241b;
+  --red: #f08a8a;
+  --red-wash: #2a1416;
+
+  --ground: #0c0f14;
+  --panel: #141921;
+  --sunk: #1b212b;
+  --raised: #1d2430;
+  --ink: #e9edf3;
+  --body: #b4bdc9;
+  --mute: #7b8492;
+  --line: #262e3a;
+  --line-soft: #1f2631;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .5);
+  --shadow-2: 0 10px 30px -18px rgba(0, 0, 0, .9);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--ground);
+  color: var(--body);
+  font: 400 14px/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+[data-motion="reduced"] *,
+[data-motion="reduced"] *::before,
+[data-motion="reduced"] *::after {
+  animation-duration: 1ms !important;
+  transition-duration: 1ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--ink);
+  border-radius: var(--r-md);
+  font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background var(--spring), border-color var(--spring);
+}
+.btn:hover { background: var(--sunk); }
+.btn--primary {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--amber-ink);
+}
+.btn--primary:hover { filter: brightness(1.08); background: var(--amber); }
+.btn--danger { color: var(--red); border-color: var(--red); }
+.btn--ghost { border-color: transparent; background: transparent; }
+.btn--ghost:hover { background: var(--sunk); }
+.btn kbd { font: 600 11px var(--mono); color: var(--mute); }
+.btn--primary kbd { color: var(--amber-ink); opacity: .75; }
+
+/* ── Flag badges — shape + letter carry the meaning, colour reinforces ── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  font: 700 11px/1 var(--mono);
+  border-radius: 3px;
+  cursor: help;
+  user-select: none;
+}
+.badge--imp-high   { background: var(--amber-wash); color: var(--amber); }
+.badge--imp-normal { background: var(--sunk); color: var(--mute); }
+.badge--imp-low    { background: transparent; color: var(--mute); opacity: .55; }
+.badge--urg-now    { background: var(--red-wash); color: var(--red); border-radius: 50% 50% 3px 50%; }
+.badge--urg-today  { background: var(--amber-wash); color: var(--amber); border-radius: 50% 3px 50% 50%; }
+.badge--urg-week   { background: var(--blue-wash); color: var(--blue); }
+.badge--urg-none   { background: transparent; color: var(--mute); opacity: .55; }
+
+.badge-pair { display: inline-flex; gap: 3px; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: var(--r-pill);
+  font: 600 11px/1 var(--mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  background: var(--sunk);
+  color: var(--mute);
+}
+.pill--waiting { background: var(--amber-wash); color: var(--amber); }
+.pill--working { background: var(--blue-wash); color: var(--blue); }
+.pill--done    { background: var(--green-wash); color: var(--green); }
+.pill--alert   { background: var(--red-wash); color: var(--red); }
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 7px;
+  background: var(--mute);
+}
+.dot--live { background: var(--green); }
+.dot--demo { background: var(--blue); }
+.dot--reconnecting { background: var(--amber); animation: pulse 1.4s ease-in-out infinite; }
+.dot--stale { background: var(--mute); }
+.dot--unavailable { background: var(--red); }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* ── Tooltip ──────────────────────────────────────────────────────────── */
+
+#tooltip {
+  position: fixed;
+  z-index: 90;
+  max-width: 340px;
+  padding: 11px 13px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--body);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+#tooltip[data-open="1"] { opacity: 1; }
+#tooltip h5 {
+  margin: 0 0 6px;
+  font: 600 12px/1.2 var(--font);
+  color: var(--ink);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+#tooltip h5 span { font: 500 10.5px var(--mono); color: var(--mute); text-transform: uppercase; }
+#tooltip ul { margin: 0; padding-left: 15px; }
+#tooltip li { margin-bottom: 3px; }
+#tooltip .tt-foot {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--mute);
+  font-size: 11.5px;
+}
+
+/* ── Skeletons — honest loading, never a fake row ─────────────────────── */
+
+.skeleton {
+  background: linear-gradient(90deg, var(--sunk) 25%, var(--line-soft) 50%, var(--sunk) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s linear infinite;
+  border-radius: var(--r-sm);
+  height: 12px;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ── Privacy blur ─────────────────────────────────────────────────────── */
+
+body[data-privacy="1"] .privacy-hide {
+  filter: blur(9px);
+  pointer-events: none;
+  user-select: none;
+}
+#privacy-banner {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--ground) 86%, transparent);
+  text-align: center;
+  padding: 24px;
+}
+body[data-privacy="1"] #privacy-banner { display: flex; }
+#privacy-banner div { max-width: 36ch; }
+#privacy-banner strong { display: block; color: var(--ink); font-size: 16px; margin-bottom: 6px; }
+#privacy-banner span { color: var(--mute); font-size: 13px; }
