@@ -6,3 +6,4 @@ __pycache__/
 *.db-shm
 .DS_Store
 Thumbs.db
+screenshots/

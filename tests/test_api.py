@@ -105,7 +105,13 @@ def main() -> int:
         sends = [a for a in api._store.action_log() if a["verb"] == "send"]
         check("the send is logged", bool(sends))
         check("logged as approved by click", sends[0]["approved_by"] == "click")
-        check("the exact content is recorded", "Wednesday" in sends[0]["payload"])
+        # The property is that the log holds the exact body that was approved, not
+        # that it contains any particular word — the drafts are per-item now.
+        draft_row = api._store.draft(row["id"])
+        check("the exact content is recorded",
+              sends[0]["payload"] == draft_row.body and bool(draft_row.body),
+              f"{sends[0]['payload'][:60]!r} vs {draft_row.body[:60]!r}")
+        check("and so is the exact recipient", sends[0]["target"] == draft_row.to_addr)
         check("an unknown draft is refused", "error" in api.approve_send("no-such-draft"))
 
         print("shortcuts")

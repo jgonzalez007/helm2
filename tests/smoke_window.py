@@ -78,6 +78,32 @@ def probe(api: A.Api) -> None:
             "document.querySelectorAll('.approval').length")
         RESULT["approval_recipient"] = api._panel.evaluate_js(
             "document.querySelector('.approval dd')?.innerText")
+        # The screenshots caught the Send button sitting below the fold. The one
+        # control that approves a send must never need scrolling to find.
+        RESULT["send_visible"] = api._panel.evaluate_js("""
+            (() => {
+              const btn = document.querySelector('.approval [data-approve]');
+              const log = document.getElementById('chatlog');
+              if (!btn || !log) return 'missing';
+              const b = btn.getBoundingClientRect();
+              const l = log.getBoundingClientRect();
+              return (b.top >= l.top - 1 && b.bottom <= l.bottom + 1) ? 'yes'
+                : `clipped b=${Math.round(b.bottom)} l=${Math.round(l.bottom)}`;
+            })()
+        """)
+        RESULT["approval_body_visible"] = api._panel.evaluate_js(
+            "!!document.querySelector('.approval .body')?.innerText.trim()")
+        RESULT["chatlog_metrics"] = api._panel.evaluate_js("""
+            (() => {
+              const l = document.getElementById('chatlog');
+              const pane = document.getElementById('chatpane');
+              return {scrollH: l.scrollHeight, clientH: l.clientHeight,
+                      scrollTop: l.scrollTop, paneH: pane.clientHeight,
+                      overflow: getComputedStyle(l).overflowY,
+                      minH: getComputedStyle(l).minHeight,
+                      drawerH: document.getElementById('drawer').clientHeight};
+            })()
+        """)
         RESULT["streamed_reply"] = api._panel.evaluate_js(
             "document.querySelector('.bubble.assistant')?.innerText.slice(0,40)")
         RESULT["sends_before_click"] = len(
@@ -127,8 +153,10 @@ def main() -> int:
     )
     api.wire_bus()
 
+    # private_mode gives a throwaway WebView2 profile. A shared one cached ui/*.css
+    # and ui/*.js between runs, so this test was quietly verifying stale files.
     webview.start(lambda: threading.Thread(target=probe, args=(api,), daemon=True).start(),
-                  private_mode=False, storage_path=str(data_dir() / "webview"), debug=False)
+                  private_mode=True, debug=False)
 
     print("\n--- rendered DOM ---")
     for k, v in RESULT.items():
@@ -144,6 +172,9 @@ def main() -> int:
           and RESULT.get("drawer_open") == "1"
           and (RESULT.get("chips") or 0) > 0
           and RESULT.get("approval_cards") == 1
+          # The Send button must be on screen without scrolling.
+          and RESULT.get("send_visible") == "yes"
+          and RESULT.get("approval_body_visible") is True
           # An approval card must exist while nothing has been sent.
           and RESULT.get("sends_before_click") == 0
           and "not read" in (RESULT.get("tooltip") or ""))

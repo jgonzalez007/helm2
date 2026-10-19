@@ -277,7 +277,13 @@ function renderApproval(card) {
       <button class="btn btn--ghost" data-discard="1">Discard</button>
     </footer>`;
   el('chatlog').appendChild(node);
-  el('chatlog').scrollTop = el('chatlog').scrollHeight;
+  // Scroll after layout, not before. Setting scrollTop in the same frame left the
+  // Send button below the fold, and scrollIntoView alone did not move the log
+  // either — so move the scroll container itself, once the card has a height.
+  requestAnimationFrame(() => {
+    const log = el('chatlog');
+    log.scrollTop = log.scrollHeight;
+  });
 }
 
 /** The click above is the approval. The delay below is the window to take it back. */

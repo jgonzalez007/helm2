@@ -43,8 +43,13 @@ SLACK = "mcp__claude_ai_Slack__"
 
 CALENDAR_READ = (f"{MS365}outlook_calendar_search", f"{MS365}read_resource")
 MAIL_READ = (f"{MS365}outlook_email_search", f"{MS365}read_resource")
+# Probed 2026-10-19: without the search and profile tools, a mentions sweep is
+# simply refused — "permission denied; search not performed". All read-only.
 SLACK_READ = (f"{SLACK}slack_read_channel", f"{SLACK}slack_list_user_channels",
-              f"{SLACK}slack_read_thread", f"{SLACK}slack_search_users")
+              f"{SLACK}slack_read_thread", f"{SLACK}slack_search_users",
+              f"{SLACK}slack_search_public_and_private", f"{SLACK}slack_search_public",
+              f"{SLACK}slack_read_user_profile", f"{SLACK}slack_list_channel_members",
+              f"{SLACK}slack_search_channels")
 
 # Never allowlisted by anything in HELM. Writes go through Connector.send(), which
 # needs a clicked ApprovalToken, and that path is built in phase 10.

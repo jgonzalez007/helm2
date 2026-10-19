@@ -383,12 +383,20 @@ h2.sec .count { color: var(--ink); }
 
 #chatlog {
   flex: 1 1 auto;
+  /* Without min-height:0 a flex child refuses to shrink below its content, so it
+     overflows its parent instead of scrolling. That hid the approval card's Send
+     button below the fold and made the whole log unscrollable. */
+  min-height: 0;
   overflow-y: auto;
   padding: 4px 16px 12px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
+/* Flex children default to flex-shrink:1, so a long chat squashed its own messages
+   instead of overflowing — the log never scrolled and the approval card's Send
+   button was cut off the bottom of a compressed card. */
+#chatlog > * { flex: 0 0 auto; }
 .bubble { font-size: 13.5px; white-space: pre-wrap; }
 .bubble.user {
   align-self: flex-end;

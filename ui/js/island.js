@@ -132,6 +132,12 @@ on('flag_changed', refresh);
 on('item_changed', refresh);
 
 window.helm = Object.assign(window.helm || {}, {
+  // Pins the island open. Used by tests/screenshots.py, which otherwise races the
+  // auto-collapse timer.
+  hold() {
+    clearTimeout(timer);
+    setState('compact');
+  },
   panic() {
     document.body.dataset.privacy = document.body.dataset.privacy === '1' ? '0' : '1';
   },

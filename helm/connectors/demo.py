@@ -173,14 +173,50 @@ def _fixtures(now: datetime) -> tuple[list[Item], dict[str, list[dict]]]:
     return items, threads
 
 
+# One draft per fixture, so an approval card always shows a reply that belongs to
+# the item it was raised from. (subject, recipient, body)
+DRAFTS = {
+    "demo-mail-1": (
+        "Re: Q4 forecast sign-off needed by Thursday",
+        "scott.chen@sailpoint.com",
+        "Scott — numbers land Wednesday morning. EMEA is the only line still "
+        "moving; I'll flag it separately if it shifts more than a point."),
+    "demo-slack-1": (
+        "Re: #deal-acme pricing question",
+        "#deal-acme",
+        "Confirmed on the ELA uplift — go ahead and send the quote. Shout if "
+        "legal wants the redlines attached."),
+    "demo-mail-2": (
+        "Re: FY27 territory planning — your input",
+        "bryan.kelley@sailpoint.com",
+        "Bryan — I'd keep the west coast split as it stands through Q1 and "
+        "revisit once the Northwind number lands. Happy to walk through it Thursday."),
+    "demo-mail-3": (
+        "Re: PO 88213 overdue",
+        "ap-invoices@sailpoint.com",
+        "Approved. Please push this one through — the approval window lapsed "
+        "while I was out."),
+    "demo-mail-6": (
+        "Re: SOW redlines for Northwind",
+        "heidi.stark@sailpoint.com",
+        "Heidi — following up on the redlines I sent Thursday. Anything legal "
+        "still needs from me before this can move?"),
+    "_default": (
+        "Re: your message",
+        "scott.chen@sailpoint.com",
+        "Thanks — I'll come back to you on this shortly."),
+}
+
 # Scripted replies, keyed by the quick-action chip or by a keyword in free text.
 # Phase 1 has no model behind the chat; these make the flow reviewable.
 SCRIPT = {
+    # Deliberately quotes no body: the approval card carries the real draft for this
+    # item, and an earlier version narrated a different one than the card showed.
     "draft reply": (
-        "Here's a reply in your voice — short, no preamble, commits to a date:\n\n"
-        "Scott — numbers land Wednesday morning. EMEA is the only line still moving; "
-        "I'll flag it separately if it shifts more than a point.\n\n"
-        "Nothing is sent until you approve the card below."
+        "Drafted in your voice — short, no preamble, and it commits to a date only "
+        "where the thread already does.\n\n"
+        "The card below holds the exact text and the exact recipient. Nothing is "
+        "sent until you click Send, and you get 30 seconds to undo after that."
     ),
     "summarize": (
         "Scott needs Q4 forecast sign-off before the Thursday board pack. You said "
@@ -239,15 +275,18 @@ class DemoSource:
         return Thread(item_id=item_id, messages=threads.get(item_id, []))
 
     def draft(self, item_id: str, intent: str) -> Draft:
-        """Drafting never sends. There is no token here and no send call."""
+        """Drafting never sends. There is no token here and no send call.
+
+        The fixture is keyed by item so the approval card matches what it claims to
+        reply to — an earlier version returned the same mail draft for every item,
+        which showed a Q4-forecast reply addressed to a Slack channel.
+        """
+        _, _ = _fixtures(datetime.now(timezone.utc))
+        subject, to_addr, body = DRAFTS.get(item_id, DRAFTS["_default"])
         return Draft(
             id=f"draft-{uuid.uuid4().hex[:8]}", item_id=item_id,
             channel="slack" if self.name == "slack" else "mail",
-            to_addr="scott.chen@sailpoint.com" if self.name == "mail" else "#deal-acme",
-            subject="Re: Q4 forecast sign-off needed by Thursday",
-            body=("Scott — numbers land Wednesday morning. EMEA is the only line still "
-                  "moving; I'll flag it separately if it shifts more than a point."),
-            created_at=now_iso(),
+            to_addr=to_addr, subject=subject, body=body, created_at=now_iso(),
         )
 
     def send(self, draft_id: str, approval: ApprovalToken) -> dict:
