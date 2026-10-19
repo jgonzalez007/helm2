@@ -21,6 +21,7 @@ from .bus import EventBus
 from .connectors.base import SendRefused
 from .connectors.claude_source import CalendarSource
 from .connectors.demo import DEMO_SETTINGS, DemoSource
+from .connectors.mail_source import MailSource, describe_voice
 from .connectors.pending import PendingSource
 from .hotkeys import BINDINGS, Hotkeys
 from .models import ApprovalToken, Flag, Item, SourceStatus, now_iso
@@ -63,11 +64,11 @@ class Api:
             return {n: DemoSource(n) for n in ("mail", "slack", "calendar")}
         # Live mode never pads a gap with fixtures: a panel that mixes real and fake
         # data is worse than one that says a source is not built yet.
+        domains = self._store.get_setting("internal_domains") or []
         return {
-            "mail": PendingSource("mail", "phase 3"),
+            "mail": MailSource(ME, domains, self._availability, store=self._store),
             "slack": PendingSource("slack", "phase 4"),
-            "calendar": CalendarSource(
-                ME, self._store.get_setting("internal_domains") or [], self._availability),
+            "calendar": CalendarSource(ME, domains, self._availability),
         }
 
     # ── windows ─────────────────────────────────────────────────────────────
@@ -136,9 +137,14 @@ class Api:
             existing = self._store.flag(item.id)
             flag = flagmod.classify(item, cfg, existing=existing)
             self._store.set_flag(flag)
-            thread = src.get_thread(item.id)
-            if thread.messages:
-                self._store.set_thread(item.id, thread.messages)
+            # A thread can cost its own connector call, so only sources that can
+            # produce one for free are asked during a sweep. The rest fetch when the
+            # item is opened. Pulling 25 mail threads per sweep would turn two
+            # minutes into half an hour.
+            if getattr(src, "prefetch_threads", True):
+                thread = src.get_thread(item.id)
+                if thread.messages:
+                    self._store.set_thread(item.id, thread.messages)
             if known is None and source != "calendar":
                 self._bus.publish("new_email" if source == "mail" else "slack_mention",
                                   {"item_id": item.id, "subject": item.subject})
@@ -201,6 +207,7 @@ class Api:
             "hotkeys": {k: "+".join([v[0], v[1]]) for k, v in BINDINGS.items()},
             "action_log": self._store.action_log(50),
             "schedule": self.schedule_info(),
+            "voice": describe_voice(self._store.get_setting("voice_profile", {})),
         }
 
     def list_items(self) -> list[dict]:
@@ -220,19 +227,54 @@ class Api:
             return {"error": "not found"}
         flag = self._store.flag(item_id) or Flag(item_id=item_id)
         thread = self._store.thread(item_id)
+        src = self._sources.get(item.source)
+
+        # A thread we do not have yet is fetched in the background: the drawer opens
+        # now with a labelled placeholder rather than freezing for two minutes.
+        fetching = False
+        if not thread and not getattr(src, "prefetch_threads", True):
+            fetching = True
+            threading.Thread(target=self._fetch_thread, args=(item_id,),
+                             daemon=True, name="helm-thread").start()
+
         return {
             "item": item.to_dict(),
             "flag": flag.to_dict(),
             "thread": thread,
+            "thread_loading": fetching,
             "chat": self._store.chat(item_id),
+            "needs_reply_reason": (src.reply_reason(item_id)
+                                   if hasattr(src, "reply_reason") else ""),
+            "voice": describe_voice(self._store.get_setting("voice_profile", {})),
             # What the chat drawer is allowed to attach, stated rather than implied.
             "attached": [
                 {"label": "this message", "included": True},
-                {"label": f"{len(thread)} messages in thread", "included": bool(thread)},
-                {"label": f"{item.sender or 'sender'} · last 30 d with you", "included": True},
+                {"label": (f"{len(thread)} messages in thread" if thread
+                           else "the thread, once it loads" if fetching
+                           else "no thread found"),
+                 "included": bool(thread) or fetching},
+                {"label": "your writing style, from your own sent mail",
+                 "included": bool(self._store.get_setting("voice_profile", {}))},
                 {"label": "nothing else from your mailbox", "included": False},
             ],
         }
+
+    def _fetch_thread(self, item_id: str) -> None:
+        item = self._store.item(item_id)
+        src = self._sources.get(item.source) if item else None
+        if src is None:
+            return
+        try:
+            thread = src.get_thread(item_id)
+        except Exception as e:
+            self._push(f"helm.onThreadLoaded({json.dumps(item_id)}, [], "
+                       f"{json.dumps(str(e)[:200])})")
+            return
+        if thread.messages:
+            self._store.set_thread(item_id, thread.messages)
+        self._push(f"helm.onThreadLoaded({json.dumps(item_id)}, "
+                   f"{json.dumps(thread.messages)}, "
+                   f"{json.dumps('' if thread.messages else 'no thread found')})")
 
     def set_item_state(self, item_id: str, state: str) -> dict:
         extra = {}
@@ -295,19 +337,25 @@ class Api:
             def emit(chunk: str) -> None:
                 self._push(f"helm.onChatToken({json.dumps(item_id)}, {json.dumps(chunk)})")
 
-            reply = self._answer(item_id, prompt, emit)
+            reply, card = self._answer(item_id, prompt, emit)
             self._store.add_chat(item_id, "assistant", reply)
-            card = self._approval_card(item_id, prompt)
             self._push(f"helm.onChatDone({json.dumps(item_id)}, {json.dumps(card)})")
 
-    def _answer(self, item_id: str, prompt: str, emit) -> str:
+    def _answer(self, item_id: str, prompt: str, emit) -> tuple[str, dict | None]:
         """Real connector where one is built for this item type, scripted otherwise.
 
+        Returns the reply text and an approval card, if the intent would write.
         The fallback says which phase makes it real rather than passing a canned
         answer off as a reasoned one.
         """
         item = self._store.item(item_id)
         src = self._sources.get(item.source) if item else None
+        wants_write = any(w in prompt.lower() for w in _WRITE_INTENTS)
+
+        # A mail draft IS the answer: the model writes it once and the card shows the
+        # same text, rather than generating prose and then a second, different draft.
+        if item is not None and isinstance(src, MailSource) and wants_write:
+            return self._draft_mail(item_id, src, prompt, emit)
 
         if item is not None and isinstance(src, CalendarSource) and "prep" in prompt.lower():
             self._store.log_action("prep_brief", item_id, "calendar", prompt[:200], "started")
@@ -315,24 +363,49 @@ class Api:
                 reply = src.prep_brief(item, on_token=emit)
                 self._store.log_action("prep_brief", item_id, "calendar",
                                        reply[:400], "done")
-                return reply
+                return reply, None
             except cli.ClaudeUnavailable as e:
                 msg = (f"Could not reach the connector: {e}\n\n"
                        "The meeting details above are from the last successful sweep.")
                 emit(msg)
                 self._store.log_action("prep_brief", item_id, "calendar", str(e)[:200],
                                        "failed")
-                return msg
+                return msg, None
 
         reply = DemoSource.scripted_reply(prompt)
         if not self._demo:
             reply = (f"{reply}\n\n[Not a real answer: chat for {item.source if item else 'this'} "
-                     "items is scripted until its phase lands. Prep briefs on calendar "
-                     "events are live.]")
+                     "items is scripted until its phase lands. Live right now: mail "
+                     "drafts and calendar prep briefs.]")
         for token in _tokens(reply):
             emit(token)
             time.sleep(0.012)
-        return reply
+        return reply, self._approval_card(item_id, prompt)
+
+    def _draft_mail(self, item_id: str, src: MailSource, prompt: str,
+                    emit) -> tuple[str, dict | None]:
+        """Write a reply through the connector. Nothing is sent, and nothing can be."""
+        self._store.log_action("draft", item_id, "mail", prompt[:200], "started")
+        emit("Drafting in your voice…\n\n")
+        try:
+            draft = src.draft(item_id, prompt)
+        except cli.ClaudeUnavailable as e:
+            msg = f"Could not reach the connector: {e}"
+            emit(msg)
+            self._store.log_action("draft", item_id, "mail", str(e)[:200], "failed")
+            return msg, None
+        except NotImplementedError as e:
+            emit(str(e))
+            return str(e), None
+
+        self._store.add_draft(draft)
+        self._store.log_action("draft", item_id, "mail", draft.body, "drafted")
+        shown = f"{draft.subject}\n\n{draft.body}"
+        emit(shown)
+        return shown, {
+            "draft_id": draft.id, "channel": "mail", "to": draft.to_addr,
+            "subject": draft.subject, "body": draft.body, "risk": "send",
+        }
 
     def _approval_card(self, item_id: str, prompt: str) -> dict | None:
         """Only intents that would write anything produce a card."""
@@ -378,6 +451,15 @@ class Api:
                               "sent" if result.get("ok") else "failed", approved_by="click")
         self._bus.publish("action_logged", {"draft_id": draft_id})
         return result
+
+    def rebuild_voice(self) -> dict:
+        """Read a few sent messages and relearn the writing style. Its own call."""
+        src = self._sources.get("mail")
+        if not hasattr(src, "refresh_voice"):
+            return {"error": "the mail source does not learn a voice in this mode"}
+        profile = src.refresh_voice(force=True)
+        self._bus.publish("source_status", {"source": "mail", "voice": True})
+        return {"profile": profile, "described": describe_voice(profile)}
 
     def action_log(self) -> list[dict]:
         return self._store.action_log(200)
@@ -509,6 +591,11 @@ class Api:
                       "flag_changed", "item_changed", "action_logged", "privacy_changed"):
             self._bus.subscribe(event, relay(event))
 
+
+# Chat intents that would produce something sendable. Module-level, not a class
+# attribute: pywebview exposes every public attribute of js_api to JavaScript.
+_WRITE_INTENTS = ("draft reply", "reply", "propose new time", "post summary",
+                  "follow up", "nudge", "delegate")
 
 _STOPWORDS = {"the", "and", "for", "you", "your", "with", "from", "this", "that", "need",
               "needed", "please", "re", "fwd"}

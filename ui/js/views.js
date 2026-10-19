@@ -406,6 +406,19 @@ export function viewSettings(st) {
     </div>
 
     <div class="card">
+      <h3>Your writing voice</h3>
+      <p>Learned from your own sent mail, with plain string matching rather than a
+        model call. Drafts are written to match it.</p>
+      <div class="field">
+        <label>Current profile<small>${esc(st.voice || 'not built yet')}</small></label>
+      </div>
+      <div class="nextup-actions" style="margin-top:12px">
+        <button class="btn" id="rebuild-voice">Relearn from my sent mail</button>
+      </div>
+      <div id="voice-msg" style="margin-top:10px;font-size:12.5px;color:var(--mute)"></div>
+    </div>
+
+    <div class="card">
       <h3>People and noise</h3>
       <p>Stage-1 flags are only as good as these lists. Editing one reflags everything
         except items you have pinned with an override.</p>

@@ -173,9 +173,14 @@ def extract_json(text: str):
     fence = re.search(r"```(?:json)?\s*(.+?)```", body, re.S)
     if fence:
         body = fence.group(1).strip()
-    for opener, closer in (("[", "]"), ("{", "}")):
-        start, end = body.find(opener), body.rfind(closer)
-        if start != -1 and end > start:
+    # Whichever bracket opens first wins. Always trying "[" first meant an object
+    # containing an array — {"messages":[...]} — parsed as the inner array, and a
+    # caller expecting a dict then reported "could not read the reply".
+    candidates = [(body.find(o), o, c) for o, c in (("[", "]"), ("{", "}"))]
+    candidates = sorted((i, o, c) for i, o, c in candidates if i != -1)
+    for start, opener, closer in candidates:
+        end = body.rfind(closer)
+        if end > start:
             try:
                 return json.loads(body[start:end + 1])
             except json.JSONDecodeError:

@@ -52,14 +52,22 @@ Needs a display:
 .\.venv\Scripts\python.exe -m tests.smoke_window
 ```
 
-Needs the real connectors, reads the real calendar, takes 1-3 minutes:
+```bash
+.\.venv\Scripts\python.exe -m tests.test_phase3
+```
+
+Needs the real connectors and reads your real data. Minutes, not seconds:
 
 ```bash
 .\.venv\Scripts\python.exe -m tests.live_calendar --prep
 ```
 
-`--demo` is the default. `--live` gives the real calendar; mail and Slack report
-`unavailable` until phases 3 and 4.
+```bash
+.\.venv\Scripts\python.exe -m tests.live_mail --draft
+```
+
+`--demo` is the default. `--live` gives the real calendar and mail; Slack reports
+`unavailable` until phase 4.
 
 ## NO NPM. EVER.
 
@@ -120,6 +128,10 @@ mcp__claude_ai_Slack__slack_read_channel
 | resident process, warm turn, text only | 11.1 s |
 | resident process, warm turn, with connector call | 29.7 s |
 | calendar sweep, 25 events (phase 2, measured live) | 124–144 s |
+| mail sweep, inbox + sent, two tool calls (phase 3) | 197–232 s |
+| mail thread fetch, on open (phase 3) | 70 s |
+| mail draft, cold session | 34 s |
+| mail draft, warm session | 4.6 s |
 | prep brief, cold session | 46 s |
 | prep brief follow-up, warm session | 7.6 s |
 | meeting countdown (local timer) | < 1 ms |
@@ -190,6 +202,21 @@ Nothing is eval'd; no returned string is used as a path, command or recipient.
 - Live mode never pads a missing source with fixtures. Unbuilt sources report
   `unavailable` and name their phase.
 
+### Needs-reply is structural, like the flags
+
+`mail_source.needs_reply()` asks who sent the newest message in the conversation,
+whether the user was on To: rather than Cc:, and whether they have already replied.
+It never reads the body. A question mark, "please confirm" or "ACTION REQUIRED"
+changes nothing. The same rule as the flags, for the same reason, and
+`tests/test_phase3.py` asserts identical structure gives an identical answer
+regardless of body text.
+
+### A thread costs a connector call
+
+`poll()` only prefetches threads from sources with `prefetch_threads = True`.
+Mail sets it `False` and fetches in `Api._fetch_thread` when the item is opened,
+pushing `helm.onThreadLoaded`. Never add a per-item connector call to a sweep.
+
 ### Minimum context
 
 - Send Claude only what the current request needs: the item, its thread, attendees,
@@ -215,6 +242,10 @@ helm/
   connectors/
     base.py         the Connector protocol every source implements
     demo.py         DemoSource — fixtures only, no I/O
+    _clean.py       field coercion shared by every real source
+    claude_source.py  CalendarSource (phase 2)
+    mail_source.py    MailSource (phase 3)
+    pending.py      sources that are not built yet, and say so
 ui/                 static HTML/CSS/JS, no build step
 tests/              assert-based self-checks, no test runner needed
 ```

@@ -43,6 +43,7 @@ class Item:
     # Calendar-only, and the handful of fields the flag rules need from
     # structured metadata rather than from the body.
     to_me_direct: bool = True        # on To:/@you rather than Cc:/channel noise
+    cc_me: bool = False              # on Cc, which is not the same as not addressed
     organizer_is_me: bool = False
     presenter_is_me: bool = False
     rsvp_pending: bool = False

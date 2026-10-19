@@ -18,10 +18,9 @@ from typing import Iterable
 from .. import claude_cli as cli
 from ..bus import EventBus
 from ..models import ApprovalToken, Draft, Item, SourceStatus, Thread, now_iso
+from ._clean import (MAX_LIST, MAX_STR, _bool, _is_external, _list_of_str, _s,
+                     _safe_url, timezone_mismatch, to_local_iso)
 from .base import SendRefused, require_approval
-
-MAX_STR = 400
-MAX_LIST = 40
 
 # Measured: this shape takes ~124 s and returns 25 events. An earlier version also
 # asked for a body excerpt, attendee display names and location, which pushed every
@@ -68,78 +67,6 @@ Cover, in this order and no more than 150 words total:
 Plain text, no headings, no preamble. If something is unknown, say so rather than \
 inventing it.
 """
-
-
-def _s(value, limit: int = MAX_STR) -> str:
-    """Any scalar to a bounded string. Never trusts the type it was given."""
-    if value is None or isinstance(value, (dict, list)):
-        return ""
-    return str(value).strip()[:limit]
-
-
-def _list_of_str(value, limit: int = MAX_LIST) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [_s(v, 120) for v in value[:limit] if _s(v, 120)]
-
-
-def _bool(value) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in ("true", "1", "yes")
-
-
-# Graph returns seven fractional digits ("2026-10-16T00:00:00.0000000"), which
-# datetime.fromisoformat cannot parse and an earlier version of this regex rejected
-# outright — dropping every event. Seconds and fraction are both optional.
-_WALL = re.compile(r"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?$")
-
-
-def to_local_iso(wall: str) -> str:
-    """A wall-clock string becomes an offset-aware local ISO timestamp.
-
-    shortcut: assumes the Outlook mailbox time zone matches this machine's, which
-    `timezone_mismatch` checks and reports; upgrade to a Windows-to-IANA mapping if
-    the user ever travels with a mailbox set to another zone.
-    """
-    m = _WALL.match(_s(wall, 40).replace(" ", "T"))
-    if not m:
-        return ""
-    wall = m.group(1)
-    if len(wall) == 16:
-        wall += ":00"
-    try:
-        # A naive datetime's .astimezone() reads it as local time, which is exactly
-        # what a wall-clock string in the mailbox's own zone means.
-        return datetime.fromisoformat(wall).astimezone().isoformat(timespec="seconds")
-    except ValueError:
-        return ""
-
-
-def timezone_mismatch(reported: str) -> str:
-    """Empty when the mailbox zone matches this machine, a warning when it does not."""
-    reported = _s(reported, 64)
-    if not reported:
-        return ""
-    local_names = {n for n in time.tzname if n}
-    if reported in local_names:
-        return ""
-    return (f"Outlook reports times in {reported!r} but this machine is "
-            f"{'/'.join(sorted(local_names)) or 'unknown'}. Meeting times may be off; "
-            "times are read as local.")
-
-
-def _safe_url(value) -> str:
-    """A join link is opened in a browser, so anything but http(s) is discarded."""
-    url = _s(value, 2048)
-    return url if url.lower().startswith(("http://", "https://")) else ""
-
-
-def _is_external(email: str, internal_domains: Iterable[str]) -> bool:
-    email = email.lower()
-    if "@" not in email:
-        return False
-    return email.rsplit("@", 1)[-1] not in {d.lower() for d in internal_domains}
 
 
 def is_all_day(start: str, end: str) -> bool:

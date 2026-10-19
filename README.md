@@ -4,8 +4,9 @@ A local-first desktop command center for one person's work day: Outlook mail and
 calendar, Slack, two-axis importance/urgency flags, per-item chat, daily summaries,
 and a shortcuts panel. One Python codebase, Windows and macOS, **no npm**.
 
-Phases 1 and 2 of 11 are complete: the whole UI on fixtures, plus a real read-only
-calendar through the connectors your organization already approved.
+Phases 1 to 3 of 11 are complete: the whole UI on fixtures, plus a real read-only
+calendar and real mail — triage, needs-reply detection and drafts in your own
+voice — through the connectors your organization already approved.
 
 ## Run it
 
@@ -43,12 +44,13 @@ If Microsoft 365 says `connected`:
 .\.venv\Scripts\python.exe run.py --live
 ```
 
-Your real calendar, read-only. Mail and Slack show as `unavailable` and name the
-phase that builds them — live mode never pads a gap with fixtures.
+Your real calendar and mail, read-only plus drafts. Slack shows as `unavailable`
+and names the phase that builds it — live mode never pads a gap with fixtures.
 
-**What live mode costs.** Every sweep is a model turn. The cadence is 5 minutes for
-calendar during work hours, 30 minutes outside them, paused during quiet hours.
-Settings shows the real cadence, the next sweep and the measured round-trip.
+**What live mode costs.** Every sweep is a model turn. Measured here: a calendar
+sweep takes 124–144 s and a mail sweep 197–232 s, so both run every 10 minutes in
+work hours, 30 minutes outside them, and pause during quiet hours. Settings shows
+the real cadence, the next sweep and the measured round-trip.
 
 ## Check it
 
@@ -77,8 +79,9 @@ influence its own flag. `test_api` (54 checks) covers the bridge, the approval g
 and the JS surface. `test_phase2` (104 checks) covers connector parsing, hostile
 input, polling cadence and the tool allowlists. `smoke_window` opens the real
 windows, drives the UI and reads the rendered DOM back — it needs a display.
-`live_calendar` does one real sweep against your calendar — it needs the connectors
-and takes a few minutes.
+`test_phase3` (154 checks) covers mail parsing, needs-reply, waiting-on and the voice
+profile. `live_calendar` and `live_mail` do one real sweep each against your own data
+— they need the connectors and take minutes.
 
 ## What phase 1 gives you
 
@@ -110,6 +113,24 @@ Press `?` in the panel for the full list.
 | `r` `e` `s` `d` | reply, done, snooze, delegate |
 | `?` | keyboard overlay |
 
+## What phase 3 adds
+
+- **Real mail**: one sweep reads the inbox and sent items together, because the sent
+  list is what makes needs-reply, waiting-on and the voice profile work without a
+  second connector call
+- **Needs-reply detection** computed from thread structure, never from body text —
+  a question mark does not make something need a reply, and "please confirm receipt"
+  does not either. Each row states its reason.
+- **Waiting-on**: things you sent more than three days ago that nobody answered
+- **A voice profile** learned from your own sent mail with plain string matching, no
+  model call — greeting, sign-off, typical length — and drafts written to match it
+- **Drafts through the connector**, streamed into the chat drawer, every one ending in
+  an approval card. `send()` still refuses: that is phase 10.
+- **Threads fetched on open, not on sweep.** A thread costs its own connector call;
+  pulling 25 per sweep would turn two minutes into half an hour. The drawer shows a
+  labelled skeleton saying it is a 1-2 minute call, never a spinner that implies
+  otherwise.
+
 ## What phase 2 adds
 
 - **Real calendar, read-only**, through the approved Microsoft 365 connector
@@ -122,9 +143,16 @@ Press `?` in the panel for the full list.
 
 ## Known limits
 
-- **Mail and Slack chat is still scripted.** Prep briefs on calendar events are the
-  only live chat path. Mail is phase 3, Slack phase 4; the drawer says so rather
-  than passing a canned answer off as a reasoned one.
+- **Slack chat is still scripted.** Mail drafts and calendar prep briefs are live;
+  Slack is phase 4, and the drawer says so rather than passing a canned answer off
+  as a reasoned one.
+- **Automated senders are caught by a pattern list.** The real inbox is mostly
+  `approvals@`, `health@aws`, `service-now` and similar, and each new one needs a
+  pattern or a mute. Phase 5 sends genuinely ambiguous senders to Claude.
+- **Threads group by subject.** The connector returns an empty conversation id for
+  every message, so HELM strips `Re:`/`FW:` and groups on what is left — the way mail
+  clients did before conversation ids existed. Two unrelated threads that share a
+  subject will merge.
 - **Nothing can be sent.** Every source is read-only. The approval card, the
   30-second undo and the action log all work, but `send()` is wired in phase 10.
 - **Calendar times assume your mailbox zone matches this machine.** If it does not,

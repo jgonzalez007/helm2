@@ -147,6 +147,7 @@ def main() -> int:
             "open_shortcut", "export_shortcuts", "import_shortcuts",
             "get_settings", "set_setting", "reset_demo", "wire_bus",
             "poll", "resync", "schedule_info", "watch_meetings", "close",
+            "rebuild_voice",
         }
         check("no unexpected names are reachable from JS", surface == expected,
               f"extra={sorted(surface - expected)} missing={sorted(expected - surface)}")

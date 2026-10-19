@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS item (
   ends_at TEXT NOT NULL DEFAULT '',
   state TEXT NOT NULL DEFAULT 'needs_me',
   to_me_direct INTEGER NOT NULL DEFAULT 1,
+  cc_me INTEGER NOT NULL DEFAULT 0,
   organizer_is_me INTEGER NOT NULL DEFAULT 0,
   presenter_is_me INTEGER NOT NULL DEFAULT 0,
   rsvp_pending INTEGER NOT NULL DEFAULT 0,
@@ -157,7 +158,7 @@ CREATE TABLE IF NOT EXISTS setting (
 """
 
 _JSON_COLS = ("attendees", "conflicts_with")
-_BOOL_COLS = ("sender_external", "to_me_direct", "organizer_is_me", "presenter_is_me",
+_BOOL_COLS = ("sender_external", "to_me_direct", "cc_me", "organizer_is_me", "presenter_is_me",
               "rsvp_pending", "has_agenda", "all_day", "external_attendees")
 
 DEFAULT_SETTINGS = {

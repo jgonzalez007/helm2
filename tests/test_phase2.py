@@ -71,6 +71,15 @@ def test_extract_json() -> None:
           cli.extract_json('Here you go:\n[{"a":1}]\nHope that helps.') == [{"a": 1}])
     check("an empty array", cli.extract_json("[]") == [])
     check("an object", cli.extract_json('{"a":1}') == {"a": 1})
+    # Preferring "[" meant an object wrapping an array parsed as the array itself.
+    check("an object containing an array stays an object",
+          cli.extract_json('{"inbox":[{"a":1}],"sent":[]}')
+          == {"inbox": [{"a": 1}], "sent": []})
+    check("an array of objects stays an array",
+          cli.extract_json('[{"inbox":1}]') == [{"inbox": 1}])
+    check("an object wrapping an array, fenced and with prose",
+          cli.extract_json('Sure:\n```json\n{"inbox":[1,2]}\n```\nDone.')
+          == {"inbox": [1, 2]})
     for junk in ("", "   ", "I could not read your calendar.", "[not json]", None):
         check(f"junk returns None: {junk!r}", cli.extract_json(junk) is None)
 
@@ -334,7 +343,9 @@ def test_cadence() -> None:
     evening = datetime(2026, 10, 19, 22, 0)   # Monday night
     weekend = datetime(2026, 10, 17, 10, 0)   # Saturday
 
-    check("work hours poll mail every 2 min", sched.interval_for("mail", work) == 120)
+    # A mail sweep measured 230 s, so a 2-minute cadence would never finish.
+    check("work hours poll mail every 10 min",
+          sched.interval_for("mail", work) == 600)
     check("work hours poll calendar every 10 min", sched.interval_for("calendar", work) == 600)
     check("evenings back off", sched.interval_for("mail", evening) == 900)
     check("weekends back off", sched.interval_for("mail", weekend) == 900)

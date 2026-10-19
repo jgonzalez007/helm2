@@ -18,6 +18,7 @@ const st = {
   log: [],
   hotkeys: {},
   schedule: {},
+  voice: '',
   openItem: null,
   detail: null,
 };
@@ -85,6 +86,7 @@ async function refresh() {
   st.log = boot.action_log || [];
   st.hotkeys = boot.hotkeys || {};
   st.schedule = boot.schedule || {};
+  st.voice = boot.voice || '';
   render();
 }
 
@@ -156,6 +158,27 @@ const CHIPS = {
   calendar: ['prep brief', 'summarize', 'propose new time', 'remind me'],
 };
 
+/** A thread that costs a connector call shows a labelled skeleton, never a spinner
+ *  that implies it is nearly done. */
+function renderThread(d) {
+  if (d.thread.length) {
+    return d.thread.map((m) => `<div class="msg"><b>${esc(m.author)}</b>
+      <time>${esc((m.sent_at || '').replace('T', ' ').slice(0, 16))}</time>
+      <p>${esc(m.body)}</p></div>`).join('');
+  }
+  if (d.thread_loading) {
+    return `<div class="msg"><p>${esc(d.item.snippet)}</p></div>
+      <div class="msg" data-thread-skeleton="1">
+        <b>loading the rest of the thread</b>
+        <time>a connector call, about 1-2 minutes</time>
+        <div class="skeleton" style="width:82%;margin:8px 0"></div>
+        <div class="skeleton" style="width:64%;margin-bottom:6px"></div>
+        <div class="skeleton" style="width:71%"></div>
+      </div>`;
+  }
+  return `<div class="msg"><p>${esc(d.item.snippet)}</p></div>`;
+}
+
 async function openItem(itemId) {
   const d = await call('item_detail', itemId);
   if (!d || d.error) return;
@@ -169,6 +192,8 @@ async function openItem(itemId) {
       ${item.sender_external ? ' · <b>external</b>' : ''}
       · ${item.to_me_direct ? 'to: you' : 'cc only'}</div>
     ${flag.posture_warning ? `<div class="d-warn">⚠ ${esc(flag.posture_warning)}</div>` : ''}
+    ${d.needs_reply_reason ? `<div class="d-reason"><b>needs your reply</b> — ${
+    esc(d.needs_reply_reason)}</div>` : ''}
     <div class="d-flags">
       <span class="pill pill--waiting">${QUADRANT_LABEL[flag.quadrant] || flag.quadrant}</span>
       <button class="btn btn--ghost" data-override="not_important"
@@ -176,11 +201,7 @@ async function openItem(itemId) {
       <button class="btn btn--ghost" data-override="more_urgent"
         data-item-id="${esc(item.id)}">more urgent ↑</button>
     </div>
-    <div>${thread.length
-    ? thread.map((m) => `<div class="msg"><b>${esc(m.author)}</b>
-        <time>${esc(m.sent_at.replace('T', ' ').slice(0, 16))}</time>
-        <p>${esc(m.body)}</p></div>`).join('')
-    : `<div class="msg"><p>${esc(item.snippet)}</p></div>`}</div>
+    <div id="threadbox">${renderThread(d)}</div>
     <div class="chips">${(CHIPS[item.source] || []).map((c) => `<button class="chip"
       data-chip="${esc(c)}">${esc(c)}</button>`).join('')}</div>`;
 
@@ -220,6 +241,14 @@ window.helm = Object.assign(window.helm || {}, {
     if (streamNode) streamNode.dataset.streaming = '0';
     streamNode = null;
     if (itemId === st.openItem && card) renderApproval(card);
+  },
+  onThreadLoaded(itemId, messages, note) {
+    if (itemId !== st.openItem || !st.detail) return;
+    st.detail.thread = messages || [];
+    st.detail.thread_loading = false;
+    const box = el('threadbox');
+    if (box) box.innerHTML = renderThread(st.detail)
+      + (note ? `<div class="msg"><b>${esc(note)}</b></div>` : '');
   },
   focusAsk() { el('ask').focus(); },
   go,
@@ -358,6 +387,14 @@ document.addEventListener('click', async (e) => {
     const btn = t.closest('#resync');
     btn.textContent = 'Refreshing…';
     await call('resync');
+    await refresh();
+    return undefined;
+  }
+
+  if (t.closest('#rebuild-voice')) {
+    el('voice-msg').textContent = 'Reading a few of your sent messages… about 2 minutes.';
+    const res = await call('rebuild_voice');
+    el('voice-msg').textContent = res?.described || res?.error || 'Could not rebuild.';
     await refresh();
     return undefined;
   }
