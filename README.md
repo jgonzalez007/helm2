@@ -4,10 +4,10 @@ A local-first desktop command center for one person's work day: Outlook mail and
 calendar, Slack, two-axis importance/urgency flags, per-item chat, daily summaries,
 and a shortcuts panel. One Python codebase, Windows and macOS, **no npm**.
 
-Phases 1 to 7 of 11 are complete: the whole UI on fixtures, a real read-only
+Phases 1 to 8 of 11 are complete: the whole UI on fixtures, a real read-only
 calendar, real mail and real Slack — triage, needs-reply detection and drafts in your
 own voice — through the connectors your organization already approved, plus the focus
-queue, automatic privacy mode, the waiting-on tracker and unified local search.
+queue, automatic privacy mode, the waiting-on tracker, unified local search, and daily summaries.
 
 ## Run it
 
@@ -87,6 +87,10 @@ the real cadence, the next sweep and the measured round-trip.
 .\.venv\Scripts\python.exe -m tests.test_phase7
 ```
 
+```bash
+.\.venv\Scripts\python.exe -m tests.test_phase8
+```
+
 Needs a display:
 
 ```bash
@@ -121,8 +125,9 @@ profile. `test_phase4` (115 checks) covers Slack parsing, broadcasts versus ment
 the two limits above. `test_phase6` (60 checks) covers the privacy rules, snooze, and that a sweep cannot
 undo a click. `test_phase7` (97 checks) covers the search index and the query builder,
 including 28 inputs that are FTS5 syntax errors if passed through raw.
-`live_calendar`, `live_mail` and `live_classify` each do one real pass against your
-own data.
+`test_phase8` (81 checks) covers commitment extraction, the summaries and the
+metrics. `live_calendar`, `live_mail` and `live_classify` each do one real pass
+against your own data.
 
 ## What phase 1 gives you
 
@@ -153,6 +158,25 @@ Press `?` in the panel for the full list.
 | `j` `k` | move through the focus queue |
 | `r` `e` `s` `d` | reply, done, snooze, delegate |
 | `?` | keyboard overlay |
+
+## What phase 8 adds
+
+- **Morning brief**: today's meetings, each with the gaps a prep brief would close,
+  what needs a reply, what you are waiting on, and the important-but-not-urgent pile
+- **A suggested time block computed from your calendar** — the first clear hour
+  tomorrow. A booked day says "booked solid until 17:00" instead of inventing a slot.
+- **End-of-day recap**: handled, still open, tomorrow's first three meetings
+- **Commitments found in your own sent messages**, by plain string matching: no model
+  call, and nothing anyone else wrote is ever read. "I'll send X by Wednesday" counts,
+  "can you send X" does not, and neither does "Scott will confirm". Clipped phrasing
+  ("Will confirm Wednesday") counts, because the input is already only yours.
+- **Closing a commitment sticks** across re-extraction, so a promise you have kept
+  does not come back every sweep.
+- **Weekly metrics, counted rather than estimated**: items cleared, median response
+  time, meetings and meetings per day, flag accuracy, actions logged. Anything HELM
+  cannot measure honestly shows a dash, not a zero that looks like a measurement.
+- **Each summary runs once a day**, on a local timer, keyed on the date it is for —
+  so a machine asleep at 08:00 still gets its brief when it wakes, and never twice.
 
 ## What phase 7 adds
 
@@ -277,7 +301,6 @@ Press `?` in the panel for the full list.
   a 144-second sweep, so the Join button appears only where a link really came back.
 - **A sweep returns at most 25 events** over the next two days. On a dense week that is
   a real ceiling; the window shrinks before the limit bites.
-- **Commitments are illustrative.** Extraction is phase 8.
 - **Privacy detection is Windows-only.** The panic hotkey and the manual toggle work
   everywhere; the foreground watcher needs pywin32. Settings says which you have.
 - **macOS is unverified.** Written from the docs, never run on a Mac.

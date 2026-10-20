@@ -22,6 +22,7 @@ const st = {
   senders: [],
   privacy: {},
   search: {},
+  summaries: {},
   results: [],
   queryToken: 0,
   openItem: null,
@@ -101,6 +102,7 @@ async function refresh(attempt = 0) {
   st.senders = boot.senders || [];
   st.privacy = boot.privacy || st.privacy || {};
   st.search = boot.search || st.search || {};
+  st.summaries = boot.summaries || st.summaries || {};
   applyPrivacy();
   render();
 }
@@ -116,6 +118,11 @@ function applyPrivacy() {
   }
 }
 
+on('summary_ready', async (p) => {
+  st.summaries = (await call('summaries')) || st.summaries;
+  render();
+  console.info(`[helm] generated: ${(p.due || []).join(', ')}`);
+});
 on('privacy_changed', (p) => { st.privacy = p; applyPrivacy(); render(); });
 on('flag_changed', refresh);
 on('item_changed', refresh);
@@ -400,6 +407,20 @@ document.addEventListener('click', async (e) => {
   if (delSc) {
     const res = await call('delete_shortcut', Number(delSc.dataset.delSc));
     if (res) st.shortcuts = res.shortcuts;
+    return render();
+  }
+
+  const commitDone = t.closest('[data-commit-done]');
+  if (commitDone) {
+    const res = await call('set_commitment_state',
+                           Number(commitDone.dataset.commitDone), 'done');
+    if (res) st.summaries = { ...st.summaries, commitments: res.commitments };
+    return render();
+  }
+
+  if (t.closest('#refresh-commitments')) {
+    const res = await call('refresh_commitments');
+    if (res) st.summaries = { ...st.summaries, commitments: res.commitments };
     return render();
   }
 

@@ -28,6 +28,7 @@ from .connectors.slack_source import SlackSource
 from .hotkeys import BINDINGS, Hotkeys
 from .models import ApprovalToken, Flag, Item, SourceStatus, now_iso
 from .privacy import MEETING_APPS, PrivacyWatcher
+from . import summaries
 from .scheduler import Scheduler, in_quiet_hours
 from .store import Store
 from .tray import Tray
@@ -310,6 +311,7 @@ class Api:
             "privacy": self.privacy_state(),
             "search": {"available": self._store.search_available,
                        "indexed": self._store.search_size()},
+            "summaries": self.summaries(),
         }
 
     def list_items(self) -> list[dict]:
@@ -320,6 +322,55 @@ class Api:
                  for item in self._store.items()]
         pairs.sort(key=lambda p: flagmod.focus_sort_key(p[1], p[0]))
         return [{"item": item.to_dict(), "flag": flag.to_dict()} for item, flag in pairs]
+
+    # ── summaries and commitments ───────────────────────────────────────────
+
+    def summaries(self) -> dict:
+        """Every summary, computed from rows already in the store.
+
+        No connector call and no model call, so this is free and right offline.
+        """
+        rows = self.list_items()
+        log = self._store.action_log(500)
+        return {
+            "brief": summaries.morning_brief(rows),
+            "recap": summaries.end_of_day(rows),
+            "weekly": summaries.weekly_metrics(rows, log),
+            "commitments": self._store.commitments(),
+            "last_run": self._store.get_setting("summary_last_run", {}),
+        }
+
+    def refresh_commitments(self) -> dict:
+        """Re-extract promises from your own sent messages. Local, deterministic."""
+        found = summaries.extract_commitments(self._store.my_messages())
+        kept = self._store.replace_commitments([c.to_dict() for c in found])
+        self._bus.publish("item_changed", {"commitments": kept})
+        return {"found": len(found), "open": kept,
+                "commitments": self._store.commitments()}
+
+    def set_commitment_state(self, commitment_id: int, state: str) -> dict:
+        self._store.set_commitment_state(int(commitment_id), state)
+        self._store.log_action("commitment", str(commitment_id), "local", state, "done")
+        return {"commitments": self._store.commitments()}
+
+    def _run_due_summaries(self) -> None:
+        """Generate whatever is due, once per day, and tell the UI it is there."""
+        times = self._store.get_setting("summary_times") or {}
+        last = dict(self._store.get_setting("summary_last_run") or {})
+        due = summaries.due_now(datetime.now().astimezone(), times, last)
+        if not due.any():
+            return
+        today = datetime.now().astimezone().date().isoformat()
+        if due.brief or due.weekly:
+            # A brief is about what you owe, so the promise list is rebuilt first.
+            self.refresh_commitments()
+        for kind in ("brief", "recap", "weekly"):
+            if getattr(due, kind):
+                last[kind] = today
+        self._store.set_setting("summary_last_run", last)
+        for reason in due.reasons:
+            self._store.log_action("summary", reason, "local", "", "generated")
+        self._bus.publish("summary_ready", {"due": due.reasons})
 
     # ── search ──────────────────────────────────────────────────────────────
 
@@ -373,6 +424,7 @@ class Api:
             "privacy": self.privacy_state(),
             "search": {"available": self._store.search_available,
                        "indexed": self._store.search_size()},
+            "summaries": self.summaries(),
             # What the chat drawer is allowed to attach, stated rather than implied.
             "attached": [
                 {"label": "this message", "included": True},
@@ -698,6 +750,10 @@ class Api:
             woken = self._store.wake_snoozed()
             if woken:
                 self._bus.publish("item_changed", {"woken": woken})
+            try:
+                self._run_due_summaries()
+            except Exception as e:      # a bad summary must not stop the countdown
+                print(f"[helm] summary generation failed: {e}")
             for item in self._store.items(source="calendar"):
                 if item.id in warned or not item.starts_at:
                     continue

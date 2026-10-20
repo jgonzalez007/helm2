@@ -57,6 +57,8 @@ class Item:
     # A deadline parsed from the subject line or structured metadata ONLY.
     # Never from the body — see CLAUDE.md.
     deadline_at: str = ""
+    read_at: str = ""                # all three are yours, not the source's:
+    replied_at: str = ""             # store._USER_OWNED keeps a sweep from clearing them
     snooze_until: str = ""           # set by a click, cleared by store.wake_snoozed
     sent_by_me_at: str = ""          # feeds the waiting-on tracker
     last_reply_at: str = ""

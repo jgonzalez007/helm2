@@ -19,6 +19,7 @@ EVENTS = (
     "item_changed",
     "action_logged",
     "privacy_changed",
+    "summary_ready",
 )
 
 

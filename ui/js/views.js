@@ -220,47 +220,129 @@ export function viewActions(st) {
 
 // ── Recap ─────────────────────────────────────────────────────────────────
 
+function byId(st, ids) {
+  const map = new Map(st.rows.map((r) => [r.item.id, r]));
+  return (ids || []).map((id) => map.get(id)).filter(Boolean);
+}
+
+function commitmentRow(c) {
+  const due = c.due_at ? `due ${clockDay(c.due_at)}` : 'no date stated';
+  return `<div class="field">
+    <label>${esc(c.text)}<small>${esc(c.owed_to || 'recipient not recorded')}
+      · ${esc(due)} · “${esc((c.source_quote || '').slice(0, 90))}”</small></label>
+    ${c.state === 'open'
+    ? `<button class="btn btn--ghost" data-commit-done="${c.id}">mark done</button>`
+    : '<span class="pill pill--done">done</span>'}
+  </div>`;
+}
+
+function clockDay(iso) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  return new Date(t).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function metric(label, value, note) {
+  return `<div class="field"><label>${esc(label)}${note
+    ? `<small>${esc(note)}</small>` : ''}</label>
+    <span class="pill">${value === null || value === undefined ? '—' : esc(String(value))}</span>
+  </div>`;
+}
+
 export function viewRecap(st) {
-  const done = st.rows.filter((r) => r.item.state === 'done');
-  const open = st.rows.filter((r) => r.item.state === 'needs_me');
-  const block = st.rows.filter((r) => r.flag.quadrant === 'important_only');
-  const tomorrow = st.rows.filter((r) => r.item.source === 'calendar');
+  const s = st.summaries || {};
+  const brief = s.brief || {};
+  const recap = s.recap || {};
+  const week = s.weekly || {};
+  const commits = s.commitments || [];
+  const slot = brief.time_block?.slot || {};
+  const open = commits.filter((c) => c.state === 'open');
 
   return `
+    <h2 class="sec">Morning brief
+      <span class="count">${(brief.meetings || []).length} meetings</span></h2>
+    <div class="card">
+      <h3>Today's meetings</h3>
+      ${(brief.meetings || []).length
+    ? (brief.meetings).map((m) => `<div class="field">
+        <label>${clockTime(m.starts_at)} · ${esc(m.subject)}
+          <small>${esc(m.attendees.join(', ') || 'no attendees listed')}${m.gaps.length
+    ? ` · ${esc(m.gaps.join(' · '))}` : ''}</small></label>
+        <button class="btn btn--ghost" data-prep="${esc(m.id)}">Prep</button>
+      </div>`).join('')
+    : '<div class="empty">Nothing in the calendar today.</div>'}
+    </div>
+
+    <div class="card">
+      <h3>Needs a reply <span class="pill pill--waiting">${
+  (brief.needs_reply || []).length}</span></h3>
+      ${rowsOrEmpty(byId(st, brief.needs_reply), 'Nothing urgent is waiting on you.')}
+    </div>
+
+    <div class="card">
+      <h3>Waiting on others <span class="pill pill--working">${
+  (brief.waiting_on || []).length}</span></h3>
+      ${rowsOrEmpty(byId(st, brief.waiting_on), 'You are not waiting on anyone.')}
+    </div>
+
+    <div class="card">
+      <h3>Important, not urgent</h3>
+      <p>These never shout, so they get a time block instead of a badge.</p>
+      ${rowsOrEmpty(byId(st, brief.time_block?.items), 'Nothing in this quadrant.')}
+      <div class="field"><label>Suggested block<small>${slot.found
+    ? `${clockDay(slot.start)}, ${clockTime(slot.start)}–${clockTime(slot.end)},
+       the first clear hour in your calendar`
+    : esc(slot.reason || 'no calendar data to find a gap in')}</small></label></div>
+    </div>
+
     <h2 class="sec">End of day</h2>
     <div class="card">
-      <h3>Handled</h3>
-      <p>${done.length} item${done.length === 1 ? '' : 's'} cleared.</p>
-      ${rowsOrEmpty(done, 'Nothing cleared yet today.')}
+      <h3>Handled <span class="pill pill--done">${(recap.handled || []).length}</span></h3>
+      ${rowsOrEmpty(byId(st, recap.handled), 'Nothing cleared yet today.')}
     </div>
     <div class="card">
-      <h3>Still open</h3>
-      <p>${open.length} waiting on you.</p>
-      ${rowsOrEmpty(open.slice(0, 5), 'Clear.')}
-    </div>
-    <div class="card">
-      <h3>Important, not urgent — worth a time block</h3>
-      <p>These never shout, so they get a suggested slot instead of a badge.</p>
-      ${block.length
-    ? `<div class="rows">${block.map(row).join('')}</div>
-         <div class="field"><label>Suggested block<small>tomorrow, 09:00–10:00,
-           before your first meeting</small></label></div>`
-    : '<div class="empty">Nothing in this quadrant.</div>'}
+      <h3>Still open <span class="pill pill--waiting">${
+  (recap.still_open || []).length}</span></h3>
+      ${rowsOrEmpty(byId(st, (recap.still_open || []).slice(0, 6)), 'Clear.')}
     </div>
     <div class="card">
       <h3>Tomorrow's first meetings</h3>
-      ${rowsOrEmpty(tomorrow.slice(0, 3), 'No meetings scheduled.')}
+      ${(recap.tomorrow || []).length
+    ? (recap.tomorrow).map((m) => `<div class="field"><label>${clockTime(m.starts_at)}
+        · ${esc(m.subject)}</label></div>`).join('')
+    : '<div class="empty">Nothing scheduled tomorrow.</div>'}
     </div>
+
+    <h2 class="sec">Commitments
+      <span class="count">${open.length} open</span></h2>
     <div class="card">
-      <h3>Commitments</h3>
-      <p>Promises extracted from your sent mail and Slack. Real extraction lands in
-        phase 8; demo mode shows the shape.</p>
-      <div class="field"><label>Send Q4 forecast numbers
-        <small>owed to Scott Chen · due Wednesday</small></label>
-        <span class="pill pill--waiting">open</span></div>
-      <div class="field"><label>Flag EMEA if it moves
-        <small>owed to Scott Chen · conditional</small></label>
-        <span class="pill pill--waiting">open</span></div>
+      <h3>What you promised</h3>
+      <p>Found in your own sent messages by plain string matching — no model call,
+        and nothing anyone else wrote is ever read. Only first-person promises count,
+        so “can you send X” is not one.</p>
+      ${commits.length ? commits.map(commitmentRow).join('')
+    : '<div class="empty">No promises found in what you have sent.</div>'}
+      <div class="nextup-actions" style="margin-top:12px">
+        <button class="btn" id="refresh-commitments">Look again</button>
+      </div>
+    </div>
+
+    <h2 class="sec">This week</h2>
+    <div class="card">
+      <h3>Metrics</h3>
+      <p>Counted, not estimated. Anything HELM cannot measure honestly shows a dash.</p>
+      ${metric('Items cleared', week.items_cleared)}
+      ${metric('Median response time', week.median_response_hours === null
+    || week.median_response_hours === undefined
+    ? null : `${week.median_response_hours} h`,
+  `across ${week.replies_counted || 0} replies this week`)}
+      ${metric('Meetings', week.meetings_total,
+    week.busiest_day ? `busiest day ${clockDay(week.busiest_day)}` : '')}
+      ${metric('Meetings per day', week.meetings_per_day, 'on days you had any')}
+      ${metric('Flag accuracy', week.flag_accuracy === null
+    || week.flag_accuracy === undefined ? null : `${week.flag_accuracy}%`,
+  `${week.flags_corrected || 0} of ${week.flags_total || 0} flags needed a correction`)}
+      ${metric('Actions logged', week.actions_logged)}
     </div>`;
 }
 

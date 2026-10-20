@@ -51,8 +51,14 @@ def probe(api: A.Api) -> None:
             "document.getElementById('counts').innerText")
         RESULT["island_next"] = api._island.evaluate_js(
             "document.getElementById('next').innerText")
-        # A JS error during module load leaves window.helm without its handlers.
-        RESULT["bridge_wired"] = api._panel.evaluate_js("typeof window.helm.onChatToken")
+        # A JS error during module load leaves window.helm missing entirely. This is
+        # the project's only syntax check for ui/js — there is no bundler and no node.
+        RESULT["bridge_wired"] = api._panel.evaluate_js(
+            "window.helm ? typeof window.helm.onChatToken : 'MODULE FAILED TO LOAD'")
+        if RESULT["bridge_wired"] != "function":
+            RESULT["error"] = ("panel module did not load — a syntax error in "
+                               "ui/js/panel.js or ui/js/views.js")
+            return
         RESULT["js_error"] = api._panel.evaluate_js("window.helm.diag.lastError")
         RESULT["island_js_error"] = api._island.evaluate_js("window.helm.diag.lastError")
 
@@ -187,6 +193,23 @@ def probe(api: A.Api) -> None:
         RESULT["search_hostile"] = api._panel.evaluate_js(
             "document.getElementById('q') ? 'still there' : 'gone'")
         RESULT["search_js_error"] = api._panel.evaluate_js("window.helm.diag.lastError")
+
+        # Phase 8: the Recap tab renders real summaries, not placeholders.
+        api._panel.evaluate_js("window.helm.go('recap')")
+        time.sleep(0.8)
+        RESULT["recap_cards"] = api._panel.evaluate_js(
+            "document.querySelectorAll('#main .card').length")
+        RESULT["recap_text"] = api._panel.evaluate_js(
+            "document.getElementById('main').innerText"
+            ".split(String.fromCharCode(10)).join(' | ')")
+        api._panel.evaluate_js("document.getElementById('refresh-commitments').click()")
+        for _ in range(30):
+            time.sleep(0.3)
+            if api._panel.evaluate_js(
+                    "document.querySelectorAll('[data-commit-done]').length"):
+                break
+        RESULT["commitments"] = api._panel.evaluate_js(
+            "document.querySelectorAll('[data-commit-done]').length")
     except Exception as e:
         RESULT["error"] = f"{type(e).__name__}: {e}"
     finally:
@@ -266,7 +289,12 @@ def main() -> int:
           # Typing must not steal the caret.
           and (RESULT.get("search_caret") or "").startswith("forecast|8|true")
           and RESULT.get("search_hostile") == "still there"
-          and not RESULT.get("search_js_error"))
+          and not RESULT.get("search_js_error")
+          # The recap shows measured numbers and at least one real commitment.
+          and (RESULT.get("recap_cards") or 0) >= 7
+          and "Suggested block" in (RESULT.get("recap_text") or "")
+          and "Flag accuracy" in (RESULT.get("recap_text") or "")
+          and (RESULT.get("commitments") or 0) > 0)
     print("\nPASS" if ok else "\nFAIL — the UI loaded but did not render as expected")
     return 0 if ok else 1
 

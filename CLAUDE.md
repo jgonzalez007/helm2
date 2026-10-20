@@ -274,6 +274,30 @@ Nothing is eval'd; no returned string is used as a path, command or recipient.
 - Live mode never pads a missing source with fixtures. Unbuilt sources report
   `unavailable` and name their phase.
 
+### ui/js has no syntax check but the window smoke test
+
+There is no bundler and no node, so nothing validates `ui/js` until a browser
+parses it. A syntax error there is silent: the module simply never loads, the
+panel renders its static HTML, and every later check reads stale DOM.
+`tests/smoke_window.py` asserts `window.helm.onChatToken` is a function and says
+"panel module did not load" when it is not. Run it after every UI change.
+
+### A commitment is only ever something you wrote
+
+`store.my_messages` filters on the connector's own `is_me`, so extraction never
+sees anyone else's text. That filter is what makes the clipped pattern safe:
+"Will confirm Wednesday" has no subject, and a subject-less sentence in your own
+outbox is yours. Loosening the input would make `_CLIPPED_RE` wrong immediately.
+
+Extraction is deterministic string matching, not a model call, so a brief costs
+nothing. `summaries.py` carries a `shortcut:` note naming exactly what it misses.
+
+### A metric that cannot be measured shows a dash
+
+`weekly_metrics` returns `None` for median response time and flag accuracy when
+there is nothing to count. A zero there reads as a measurement, which is the same
+class of lie as labelling polled data "live".
+
 ### A search box is a parser, and the parser is the defence
 
 FTS5 reads `MATCH` as an expression language. `AND`, `OR`, `"`, `(`, `NEAR(` and a
@@ -363,6 +387,7 @@ helm/
   models.py         Item, Flag, SourceStatus, ApprovalToken, Draft
   flags.py          stage-1 deterministic rules (stage 2 = classifier.py)
   privacy.py        foreground-window watcher; decide() is pure and testable
+  summaries.py      brief, recap, weekly metrics, commitment extraction
   app.py            pywebview windows + the JS bridge API
   tray.py           system tray, degrades to no-op
   hotkeys.py        global hotkeys, degrades to no-op

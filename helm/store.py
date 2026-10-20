@@ -637,6 +637,49 @@ class Store:
         self._conn().execute("DELETE FROM sender_profile WHERE addr=?",
                              ((addr or "").lower(),))
 
+    # ── commitments ─────────────────────────────────────────────────────────
+
+    def replace_commitments(self, rows: list[dict]) -> int:
+        """Rewrite the open set, keeping anything you have already closed.
+
+        Extraction re-runs over the same messages, so appending would multiply one
+        promise by the number of sweeps.
+        """
+        c = self._conn()
+        done = {r["text"] for r in c.execute(
+            "SELECT text FROM commitment WHERE state!='open'")}
+        c.execute("DELETE FROM commitment WHERE state='open'")
+        kept = [r for r in rows if r["text"] not in done]
+        c.executemany(
+            "INSERT INTO commitment(item_id,text,owed_to,due_at,source_quote,"
+            "state,detected_at) VALUES(?,?,?,?,?,'open',?)",
+            [(r.get("item_id", ""), r["text"], r.get("owed_to", ""), r.get("due_at", ""),
+              r.get("source_quote", ""), now_iso()) for r in kept])
+        return len(kept)
+
+    def commitments(self) -> list[dict]:
+        rows = self._conn().execute(
+            "SELECT id,item_id,text,owed_to,due_at,source_quote,state,detected_at "
+            "FROM commitment ORDER BY (due_at='') , due_at, id")
+        return [dict(r) for r in rows]
+
+    def set_commitment_state(self, commitment_id: int, state: str) -> None:
+        self._conn().execute("UPDATE commitment SET state=? WHERE id=?",
+                             (state, commitment_id))
+
+    def my_messages(self, limit: int = 400) -> list[dict]:
+        """Everything in the store that you wrote. Nothing anyone else wrote.
+
+        Commitment extraction must never read someone else's text, so the filter is
+        the connector's own is_me rather than a name comparison.
+        """
+        rows = self._conn().execute(
+            "SELECT t.item_id, t.body, t.sent_at, i.subject, i.sender_addr "
+            "FROM thread_msg t LEFT JOIN item i ON i.id = t.item_id "
+            "WHERE t.is_me = 1 ORDER BY t.id DESC LIMIT ?", (limit,))
+        return [{"item_id": r["item_id"], "body": r["body"], "sent_at": r["sent_at"],
+                 "to": r["sender_addr"] or ""} for r in rows]
+
     # ── search ──────────────────────────────────────────────────────────────
 
     def index_item(self, item_id: str, field: str, chunks: list[str]) -> None:
