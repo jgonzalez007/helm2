@@ -6,7 +6,6 @@ import { countdown, clockTime, esc } from './fmt.js';
 import { Wheel, wheelStateFor } from './wheel.js';
 
 const HEIGHTS = { hidden: 8, peek: 28, compact: 36 };
-const PEEK_TO_HIDDEN_MS = 2500;
 const COMPACT_TO_PEEK_MS = 4000;
 
 const el = {
@@ -47,8 +46,9 @@ el.island.addEventListener('mouseenter', () => {
 });
 
 el.island.addEventListener('mouseleave', () => {
+  // Peek is the resting state. The island never leaves the screen on its own —
+  // only privacy mode takes it away, and that is a decision you made.
   if (state === 'compact') later(COMPACT_TO_PEEK_MS, () => setState('peek'));
-  else if (state === 'peek') later(PEEK_TO_HIDDEN_MS, () => setState('hidden'));
 });
 
 el.island.addEventListener('click', () => call('open_panel'));

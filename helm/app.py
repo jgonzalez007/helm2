@@ -128,8 +128,10 @@ class Api:
             return
         try:
             self._island.resize(ISLAND_W, max(8, int(height)))
-        except Exception:
-            pass
+        except Exception as e:
+            # Swallowing this hid the fact that the island window keeps its launch
+            # height, so its transparent area sits over the screen it is not using.
+            print(f"[helm] island resize to {height} failed: {e}")
 
     # ── data ────────────────────────────────────────────────────────────────
 
@@ -861,6 +863,10 @@ def run(demo: bool = True, db_path: str | None = None) -> None:
                          name="helm-meetings").start()
         if not demo:
             scheduler.start()
+        # The guided tour lives in the panel, so a first run that leaves the panel
+        # hidden shows the user nothing at all — which is exactly what happened.
+        if not store.get_setting("first_run_done"):
+            api.open_panel()
 
     webview.start(start_background, private_mode=False,
                   storage_path=str(Store(db_path).path.parent / "webview"),
