@@ -21,6 +21,9 @@ const st = {
   voice: '',
   senders: [],
   privacy: {},
+  search: {},
+  results: [],
+  queryToken: 0,
   openItem: null,
   detail: null,
 };
@@ -97,6 +100,7 @@ async function refresh(attempt = 0) {
   st.voice = boot.voice || '';
   st.senders = boot.senders || [];
   st.privacy = boot.privacy || st.privacy || {};
+  st.search = boot.search || st.search || {};
   applyPrivacy();
   render();
 }
@@ -399,6 +403,12 @@ document.addEventListener('click', async (e) => {
     return render();
   }
 
+  if (t.closest('#reindex')) {
+    const res = await call('reindex');
+    if (res) st.search = { ...st.search, indexed: res.indexed };
+    return render();
+  }
+
   if (t.closest('#privacy-toggle')) {
     st.privacy = (await call('set_privacy')) || st.privacy;
     applyPrivacy();
@@ -522,16 +532,42 @@ document.addEventListener('change', async (e) => {
 });
 
 document.addEventListener('input', (e) => {
-  if (e.target.id === 'q') {
-    st.query = e.target.value;
-    const main = el('main');
-    const pos = main.scrollTop;
-    render();
-    main.scrollTop = pos;
-    const q = el('q');
-    if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
-  }
+  if (e.target.id === 'q') runSearch(e.target.value);
 });
+
+let searchTimer = null;
+
+function runSearch(text) {
+  st.query = text;
+  clearTimeout(searchTimer);
+  // Each keystroke would otherwise be its own bridge round-trip.
+  searchTimer = setTimeout(async () => {
+    const token = ++st.queryToken;
+    const res = await call('search', st.query);
+    // A slower earlier query must not overwrite the newest results.
+    if (token !== st.queryToken) return;
+    st.results = res?.results || [];
+    if (res) st.search = { available: res.available, indexed: res.indexed };
+    redrawSearch();
+  }, 120);
+  redrawSearch();
+}
+
+/** Repaint without losing the caret: the input is the thing being typed into. */
+function redrawSearch() {
+  if (st.view !== 'search') return;
+  const main = el('main');
+  const pos = main.scrollTop;
+  const caret = el('q')?.selectionStart ?? null;
+  render();
+  main.scrollTop = pos;
+  const q = el('q');
+  if (q) {
+    q.focus();
+    const at = caret === null ? q.value.length : caret;
+    q.setSelectionRange(at, at);
+  }
+}
 
 // ── Chat send ─────────────────────────────────────────────────────────────
 
@@ -572,8 +608,9 @@ el('ask').addEventListener('keydown', async (e) => {
     || text.toLowerCase() === label.toLowerCase());
   if (view) return go(view[0]);
 
-  st.query = text;
-  return go('search');
+  go('search');
+  runSearch(text);
+  return undefined;
 });
 
 // ── Focus actions ─────────────────────────────────────────────────────────

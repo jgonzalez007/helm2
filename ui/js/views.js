@@ -266,24 +266,53 @@ export function viewRecap(st) {
 
 // ── Search ────────────────────────────────────────────────────────────────
 
+const FIELD_LABEL = { item: 'subject', thread: 'in the thread', chat: 'in your chat' };
+
+/** A hit row: the item, plus where the match was and the words around it. */
+function hitRow(r) {
+  const { item, flag, excerpt, field } = r;
+  const who = item.sender || item.thread_id || '—';
+  const age = item.received_at ? rel(item.received_at) : clockTime(item.starts_at);
+  return `<button class="row row--hit" data-item="${esc(item.id)}"
+      data-state="${esc(item.state)}">
+    ${badgePair(flag)}
+    <span class="row-who">${esc(who)}</span>
+    <span class="row-subject">${esc(item.subject)}
+      <em class="hit-excerpt">${mark(excerpt)}</em></span>
+    <span class="hit-where">${esc(FIELD_LABEL[field] || field)}</span>
+    <span class="row-age">${esc(age)}</span>
+  </button>`;
+}
+
+/** The index wraps matches in ‹…›; everything else is escaped before unwrapping. */
+function mark(excerpt) {
+  return esc(excerpt || '')
+    .split('‹').join('<mark>')
+    .split('›').join('</mark>');
+}
+
 export function viewSearch(st) {
-  const q = (st.query || '').trim().toLowerCase();
-  const hits = q
-    ? st.rows.filter((r) => `${r.item.subject} ${r.item.snippet} ${r.item.sender}`
-      .toLowerCase().includes(q))
-    : [];
+  const q = (st.query || '').trim();
+  const s = st.search || {};
+  const hits = (st.results || []).filter((r) => matchesFilter(r.flag, st.filter));
+
+  const note = s.available === false
+    ? 'This SQLite build has no FTS5, so search is unavailable. Nothing else is affected.'
+    : `Mail, Slack, meetings and item chats. ${s.indexed || 0} entries indexed `
+      + 'locally — instant, offline, no connector call.';
+
   return `
     <h2 class="sec">Search ${filterBar(st.filter)}</h2>
     <div class="card" style="max-width:none">
       <div class="field">
-        <label for="q">Across mail, Slack, meetings and item chats
-          <small>Local index, instant, works offline. Full FTS5 lands in phase 7 —
-            this searches what is loaded.</small></label>
-        <input id="q" type="text" value="${esc(st.query || '')}" placeholder="type to search">
+        <label for="q">Across everything HELM has seen<small>${esc(note)}</small></label>
+        <input id="q" type="search" value="${esc(st.query || '')}"
+          placeholder="type to search" autocomplete="off" spellcheck="false">
       </div>
     </div>
-    ${q ? rowsOrEmpty(hits.filter((r) => matchesFilter(r.flag, st.filter)), 'No matches.')
-    : '<div class="empty">Type to search.</div>'}`;
+    ${!q ? '<div class="empty">Type to search.</div>'
+    : hits.length ? `<div class="rows">${hits.map(hitRow).join('')}</div>`
+      : `<div class="empty">No matches for “${esc(q)}”.</div>`}`;
 }
 
 // ── Shortcuts ─────────────────────────────────────────────────────────────
@@ -442,6 +471,23 @@ export function viewSettings(st) {
     ? 'Show the panel' : 'Hide the panel now'}</button>
         <span style="align-self:center;color:var(--mute);font-size:12.5px">
           or Ctrl+Shift+\\ from anywhere</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Search index</h3>
+      <p>A local SQLite index over everything HELM has seen: subjects, previews,
+        thread messages and your own item chats. No connector call, no model call,
+        and it works offline.</p>
+      <div class="field">
+        <label>Entries indexed<small>${st.search?.available === false
+    ? 'this SQLite build has no FTS5, so search is unavailable'
+    : 'rebuilt automatically when the index is empty'}</small></label>
+        <span class="pill ${st.search?.available === false
+    ? 'pill--alert' : 'pill--done'}">${st.search?.indexed ?? 0}</span>
+      </div>
+      <div class="nextup-actions" style="margin-top:12px">
+        <button class="btn" id="reindex">Rebuild the index</button>
       </div>
     </div>
 

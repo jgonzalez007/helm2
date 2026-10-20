@@ -1,6 +1,7 @@
 """One SQLite file. No credentials live here.
 
-FTS5 search arrives in phase 7; the tables it indexes already exist.
+Search is an FTS5 index over the item, thread_msg and chat tables, written
+alongside them rather than by triggers, so one code path owns what gets indexed.
 """
 
 from __future__ import annotations
@@ -170,6 +171,17 @@ CREATE TABLE IF NOT EXISTS setting (
 );
 """
 
+# Kept out of SCHEMA because _schema_columns() parses CREATE TABLE and a virtual
+# table has no column declarations to compare against.
+SEARCH_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
+  item_id UNINDEXED,
+  field UNINDEXED,
+  text,
+  tokenize="unicode61 remove_diacritics 2"
+);
+"""
+
 _JSON_COLS = ("attendees", "conflicts_with")
 _BOOL_COLS = ("sender_external", "to_me_direct", "cc_me", "group_chat", "organizer_is_me", "presenter_is_me",
               "rsvp_pending", "has_agenda", "all_day", "external_attendees")
@@ -212,6 +224,33 @@ def _upsert_set(col: str) -> str:
     return f"{col}=excluded.{col}"
 
 
+# FTS5 treats what the user types as an expression language: `AND`, `"`, `(`, `*`
+# and `NEAR(` are all syntax errors, and a bare `*` is "unknown special query".
+# Search-as-you-type sends a new query on every keystroke, so a raw string reaches
+# MATCH mid-word constantly. Tokens are extracted and quoted instead of escaped —
+# an allowlist, so there is no operator left to get wrong.
+_TOKEN_RE = re.compile(r"[0-9A-Za-z_@.\-]+")
+
+
+def fts_query(text: str) -> str:
+    """A MATCH expression that cannot be a syntax error, from anything typed."""
+    tokens = _TOKEN_RE.findall(text or "")
+    if not tokens:
+        return ""
+    # Quoting makes each token a phrase, so an address like health@aws.com matches
+    # as its parts in order. The last token gets a prefix match so results appear
+    # while the word is still being typed.
+    quoted = [f'"{t}"' for t in tokens[:-1]]
+    quoted.append(f'"{tokens[-1]}"*')
+    return " ".join(quoted)
+
+
+def _item_chunks(row) -> list[str]:
+    """What is searchable about an item itself: subject, preview and who sent it."""
+    return [f"{row['subject']} {row['sender']} {row['sender_addr']}".strip(),
+            row["snippet"] or ""]
+
+
 def _schema_columns() -> dict[str, dict[str, str]]:
     """{table: {column: declaration}} read straight from SCHEMA, so the two cannot drift."""
     tables: dict[str, dict[str, str]] = {}
@@ -244,8 +283,15 @@ class Store:
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path) if path else data_dir() / "helm.db"
         self._local = threading.local()
+        self.search_available = True
         with self._conn() as c:
             c.executescript(SCHEMA)
+            try:
+                c.executescript(SEARCH_SCHEMA)
+            except sqlite3.OperationalError as e:
+                # A Python built without FTS5 loses search, not the app. Settings says so.
+                self.search_available = False
+                print(f"[helm] search index unavailable ({e}); the Search tab will say so")
         self._add_missing_columns()
 
     def _add_missing_columns(self) -> None:
@@ -324,6 +370,10 @@ class Store:
             f"ON CONFLICT(source,id) DO UPDATE SET {updates}",
             d,
         )
+        self.index_item(item.id, "item", [
+            f"{item.subject} {item.sender} {item.sender_addr}".strip(),
+            item.snippet,
+        ])
 
     def _row_to_item(self, row: sqlite3.Row) -> Item:
         names = {f.name for f in dc_fields(Item)}
@@ -418,6 +468,9 @@ class Store:
             [(item_id, m.get("author", ""), m.get("body", ""), m.get("sent_at", ""),
               int(bool(m.get("is_me")))) for m in messages],
         )
+        self.index_item(item_id, "thread",
+                        [f"{m.get('author', '')} {m.get('body', '')}".strip()
+                         for m in messages])
 
     def thread(self, item_id: str) -> list[dict]:
         rows = self._conn().execute(
@@ -430,6 +483,11 @@ class Store:
         self._conn().execute(
             "INSERT INTO chat(item_id,role,content,created_at) VALUES(?,?,?,?)",
             (item_id, role, content, now_iso()))
+        # Chat accumulates, so this appends rather than replacing the field.
+        if self.search_available:
+            self._conn().execute(
+                "INSERT INTO search_fts(item_id,field,text) VALUES(?,?,?)",
+                (item_id, "chat", content))
 
     def chat(self, item_id: str) -> list[dict]:
         rows = self._conn().execute(
@@ -579,9 +637,93 @@ class Store:
         self._conn().execute("DELETE FROM sender_profile WHERE addr=?",
                              ((addr or "").lower(),))
 
+    # ── search ──────────────────────────────────────────────────────────────
+
+    def index_item(self, item_id: str, field: str, chunks: list[str]) -> None:
+        """Replace everything indexed for one item and field.
+
+        Called from upsert_item, set_thread and add_chat rather than from triggers:
+        one code path decides what is searchable, and it is readable.
+        """
+        if not self.search_available:
+            return
+        c = self._conn()
+        c.execute("DELETE FROM search_fts WHERE item_id=? AND field=?", (item_id, field))
+        rows = [(item_id, field, t) for t in chunks if t and t.strip()]
+        if rows:
+            c.executemany("INSERT INTO search_fts(item_id,field,text) VALUES(?,?,?)", rows)
+
+    def search(self, query: str, limit: int = 40) -> list[dict]:
+        """Ranked hits, one per item, with the matching excerpt.
+
+        Local, instant and offline: no connector call and no model call. The index is
+        the only thing consulted.
+        """
+        if not self.search_available:
+            return []
+        match = fts_query(query)
+        if not match:
+            return []
+        try:
+            rows = self._conn().execute(
+                "SELECT item_id, field, "
+                "snippet(search_fts, 2, '‹', '›', '…', 12) AS excerpt, "
+                "rank AS score "
+                "FROM search_fts WHERE search_fts MATCH ? ORDER BY rank LIMIT ?",
+                (match, limit * 4)).fetchall()
+        except sqlite3.OperationalError as e:
+            # fts_query is meant to make this impossible; if it ever happens the
+            # search box must stay usable rather than throw into the bridge.
+            print(f"[helm] search query rejected: {e}")
+            return []
+
+        best: dict[str, dict] = {}
+        for r in rows:
+            if r["item_id"] in best:
+                continue
+            best[r["item_id"]] = {"item_id": r["item_id"], "field": r["field"],
+                                  "excerpt": r["excerpt"], "score": r["score"]}
+            if len(best) >= limit:
+                break
+        return list(best.values())
+
+    def reindex(self) -> int:
+        """Rebuild the whole index from the tables it mirrors.
+
+        Needed once on a database written before phase 7, and after any change to
+        what counts as searchable.
+        """
+        if not self.search_available:
+            return 0
+        c = self._conn()
+        c.execute("DELETE FROM search_fts")
+        n = 0
+        for row in c.execute("SELECT id,subject,snippet,sender,sender_addr FROM item"):
+            self.index_item(row["id"], "item", _item_chunks(row))
+            n += 1
+        threads: dict[str, list[str]] = {}
+        for row in c.execute("SELECT item_id,author,body FROM thread_msg ORDER BY id"):
+            threads.setdefault(row["item_id"], []).append(
+                f"{row['author']} {row['body']}".strip())
+        for item_id, chunks in threads.items():
+            self.index_item(item_id, "thread", chunks)
+        chats: dict[str, list[str]] = {}
+        for row in c.execute("SELECT item_id,content FROM chat ORDER BY id"):
+            chats.setdefault(row["item_id"], []).append(row["content"])
+        for item_id, chunks in chats.items():
+            self.index_item(item_id, "chat", chunks)
+        return n
+
+    def search_size(self) -> int:
+        if not self.search_available:
+            return 0
+        return self._conn().execute("SELECT COUNT(*) AS n FROM search_fts").fetchone()["n"]
+
     def reset_demo(self) -> None:
         """Wipe everything a demo run created, keeping user settings and shortcuts."""
         c = self._conn()
         for t in ("item", "flag", "thread_msg", "chat", "draft", "action_log",
                   "commitment", "waiting_on", "source_state"):
             c.execute(f"DELETE FROM {t}")
+        if self.search_available:
+            c.execute("DELETE FROM search_fts")

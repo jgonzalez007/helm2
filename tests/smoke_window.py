@@ -8,6 +8,7 @@ import, a JS exception during the first render.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -153,6 +154,39 @@ def probe(api: A.Api) -> None:
         RESULT["focus_queue_len"] = len({c.split(" | ")[0] for c in cards if c})
         RESULT["focus_followup"] = next(
             (c[:170] for c in cards if c and "Draft follow-up" in c), "")
+        # Phase 7: search as you type, through the real index.
+        api._panel.evaluate_js("window.helm.go('search')")
+        time.sleep(0.5)
+        typed = ""
+        for ch in "forecast":
+            typed += ch
+            api._panel.evaluate_js(
+                "(() => { const q = document.getElementById('q');"
+                f" q.value = {typed!r};"
+                " q.dispatchEvent(new Event('input', {bubbles: true})); })()")
+            time.sleep(0.2)
+        for _ in range(30):
+            time.sleep(0.3)
+            if api._panel.evaluate_js("document.querySelectorAll('.row--hit').length"):
+                break
+        RESULT["search_hits"] = api._panel.evaluate_js(
+            "document.querySelectorAll('.row--hit').length")
+        RESULT["search_marks"] = api._panel.evaluate_js(
+            "document.querySelectorAll('.row--hit mark').length")
+        RESULT["search_caret"] = api._panel.evaluate_js(
+            "(() => { const q = document.getElementById('q');"
+            " return q.value + '|' + q.selectionStart"
+            " + '|' + (document.activeElement === q); })()")
+        # A query that is an FTS5 syntax error must not break the box.
+        hostile = json.dumps('NEAR( " AND ((')
+        api._panel.evaluate_js(
+            "(() => { const q = document.getElementById('q');"
+            f" q.value = {hostile};"
+            " q.dispatchEvent(new Event('input', {bubbles: true})); })()")
+        time.sleep(1.2)
+        RESULT["search_hostile"] = api._panel.evaluate_js(
+            "document.getElementById('q') ? 'still there' : 'gone'")
+        RESULT["search_js_error"] = api._panel.evaluate_js("window.helm.diag.lastError")
     except Exception as e:
         RESULT["error"] = f"{type(e).__name__}: {e}"
     finally:
@@ -225,7 +259,14 @@ def main() -> int:
           and RESULT.get("focus_card") == 1
           and bool(RESULT.get("focus_followup"))
           # The island has to paint its counts, not just load its module.
-          and bool(RESULT.get("island_counts")))
+          and bool(RESULT.get("island_counts"))
+          # Search runs against the real index and highlights the match.
+          and (RESULT.get("search_hits") or 0) > 0
+          and (RESULT.get("search_marks") or 0) > 0
+          # Typing must not steal the caret.
+          and (RESULT.get("search_caret") or "").startswith("forecast|8|true")
+          and RESULT.get("search_hostile") == "still there"
+          and not RESULT.get("search_js_error"))
     print("\nPASS" if ok else "\nFAIL — the UI loaded but did not render as expected")
     return 0 if ok else 1
 

@@ -274,6 +274,29 @@ Nothing is eval'd; no returned string is used as a path, command or recipient.
 - Live mode never pads a missing source with fixtures. Unbuilt sources report
   `unavailable` and name their phase.
 
+### A search box is a parser, and the parser is the defence
+
+FTS5 reads `MATCH` as an expression language. `AND`, `OR`, `"`, `(`, `NEAR(` and a
+bare `*` are syntax errors, and search-as-you-type sends a new query on every
+keystroke, so a half-typed string reaches `MATCH` constantly.
+
+`store.fts_query` extracts tokens with an allowlist regex and quotes each one,
+rather than escaping operators — there is no operator left to get wrong. The last
+token gets a prefix match so results appear mid-word. `tests/test_phase7.py` feeds
+it 28 inputs that each raise raw, including `'; DROP TABLE item; --`, and asserts
+none reach SQLite as an expression.
+
+`store.search` still catches `OperationalError` and returns an empty list: if
+`fts_query` is ever wrong, the search box must stay usable rather than throw into
+the bridge.
+
+### One code path decides what is searchable
+
+The index is written by `store.index_item` from `upsert_item`, `set_thread` and
+`add_chat`, not by SQL triggers. Three call sites you can read beat a trigger you
+forget exists. `reindex()` rebuilds from the same tables, and runs once on launch
+when the index is empty but items exist.
+
 ### A sweep must never undo a click
 
 `upsert_item` rebuilds a row from the source on every poll, so `state`,

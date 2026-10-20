@@ -156,6 +156,7 @@ def main() -> int:
             "rebuild_voice", "classify_ambiguous", "forget_sender",
             "learned_senders",
             "privacy_state", "set_privacy", "may_interrupt",
+            "search", "reindex",
         }
         check("no unexpected names are reachable from JS", surface == expected,
               f"extra={sorted(surface - expected)} missing={sorted(expected - surface)}")

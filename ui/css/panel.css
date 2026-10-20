@@ -644,3 +644,31 @@ table.log td.payload { color: var(--mute); max-width: 1px; }
 }
 .steps b { display: block; color: var(--ink); font-size: 14px; }
 .steps span { color: var(--body); font-size: 13px; }
+
+/* ── Search hits ──────────────────────────────────────────────────────── */
+
+.hit-excerpt {
+  display: block;
+  margin-top: 2px;
+  white-space: normal;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.row--hit { align-items: flex-start; padding-top: 9px; padding-bottom: 9px; }
+.row--hit .row-who, .row--hit .row-age, .row--hit .hit-where { margin-top: 1px; }
+.row--hit .row-subject { white-space: normal; }
+
+.hit-where {
+  flex: 0 0 auto;
+  font: 500 11px var(--mono);
+  color: var(--mute);
+  white-space: nowrap;
+}
+
+mark {
+  background: var(--amber-wash);
+  color: var(--amber);
+  border-radius: 2px;
+  padding: 0 1px;
+  font-weight: 600;
+}

@@ -306,6 +306,8 @@ class Api:
             # Carried here rather than fetched separately: two bridge round-trips at
             # boot raced each other and left the island unrendered.
             "privacy": self.privacy_state(),
+            "search": {"available": self._store.search_available,
+                       "indexed": self._store.search_size()},
         }
 
     def list_items(self) -> list[dict]:
@@ -316,6 +318,27 @@ class Api:
                  for item in self._store.items()]
         pairs.sort(key=lambda p: flagmod.focus_sort_key(p[1], p[0]))
         return [{"item": item.to_dict(), "flag": flag.to_dict()} for item, flag in pairs]
+
+    # ── search ──────────────────────────────────────────────────────────────
+
+    def search(self, query: str, limit: int = 40) -> dict:
+        """Local index only: instant, offline, no connector call and no model call."""
+        if not self._store.search_available:
+            return {"available": False, "results": [], "indexed": 0}
+        hits = self._store.search(query, limit)
+        results = []
+        for hit in hits:
+            item = self._store.item(hit["item_id"])
+            if item is None:
+                continue        # an item retired since it was indexed
+            flag = self._store.flag(item.id) or Flag(item_id=item.id)
+            results.append({"item": item.to_dict(), "flag": flag.to_dict(),
+                            "excerpt": hit["excerpt"], "field": hit["field"]})
+        return {"available": True, "results": results,
+                "indexed": self._store.search_size()}
+
+    def reindex(self) -> dict:
+        return {"items": self._store.reindex(), "indexed": self._store.search_size()}
 
     def item_detail(self, item_id: str) -> dict:
         item = self._store.item(item_id)
@@ -346,6 +369,8 @@ class Api:
             # Carried here rather than fetched separately: two bridge round-trips at
             # boot raced each other and left the island unrendered.
             "privacy": self.privacy_state(),
+            "search": {"available": self._store.search_available,
+                       "indexed": self._store.search_size()},
             # What the chat drawer is allowed to attach, stated rather than implied.
             "attached": [
                 {"label": "this message", "included": True},
@@ -792,6 +817,11 @@ def run(demo: bool = True, db_path: str | None = None) -> None:
         width=PANEL_W, height=PANEL_H, min_size=(760, 520),
         hidden=True, background_color="#0C0F14",
     )
+    # A database written before phase 7 has rows but no index. One rebuild, local.
+    if store.search_available and store.search_size() == 0 and store.items():
+        n = store.reindex()
+        print(f"[helm] built the search index from {n} existing items")
+
     api.wire_bus()
 
     tray, keys = Tray(), Hotkeys()

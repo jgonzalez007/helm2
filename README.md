@@ -4,10 +4,10 @@ A local-first desktop command center for one person's work day: Outlook mail and
 calendar, Slack, two-axis importance/urgency flags, per-item chat, daily summaries,
 and a shortcuts panel. One Python codebase, Windows and macOS, **no npm**.
 
-Phases 1 to 6 of 11 are complete: the whole UI on fixtures, a real read-only
+Phases 1 to 7 of 11 are complete: the whole UI on fixtures, a real read-only
 calendar, real mail and real Slack — triage, needs-reply detection and drafts in your
 own voice — through the connectors your organization already approved, plus the focus
-queue, automatic privacy mode and the waiting-on tracker.
+queue, automatic privacy mode, the waiting-on tracker and unified local search.
 
 ## Run it
 
@@ -83,6 +83,10 @@ the real cadence, the next sweep and the measured round-trip.
 .\.venv\Scripts\python.exe -m tests.test_phase6
 ```
 
+```bash
+.\.venv\Scripts\python.exe -m tests.test_phase7
+```
+
 Needs a display:
 
 ```bash
@@ -115,8 +119,10 @@ windows, drives the UI and reads the rendered DOM back — it needs a display.
 `test_phase3` (154 checks) covers mail parsing, needs-reply, waiting-on and the voice
 profile. `test_phase4` (115 checks) covers Slack parsing, broadcasts versus mentions and Slack drafts. `test_phase5` (72 checks) covers stage-2 classification, its caching, and
 the two limits above. `test_phase6` (60 checks) covers the privacy rules, snooze, and that a sweep cannot
-undo a click. `live_calendar`, `live_mail` and `live_classify` each do one real pass
-against your own data.
+undo a click. `test_phase7` (97 checks) covers the search index and the query builder,
+including 28 inputs that are FTS5 syntax errors if passed through raw.
+`live_calendar`, `live_mail` and `live_classify` each do one real pass against your
+own data.
 
 ## What phase 1 gives you
 
@@ -147,6 +153,24 @@ Press `?` in the panel for the full list.
 | `j` `k` | move through the focus queue |
 | `r` `e` `s` `d` | reply, done, snooze, delegate |
 | `?` | keyboard overlay |
+
+## What phase 7 adds
+
+- **One local index** over subjects, previews, senders, thread messages and your own
+  item chats — SQLite FTS5, instant, offline, no connector call and no model call
+- **Search as you type.** The last word is a prefix match, so `f` already finds the
+  forecast thread. One query in flight; a slower earlier answer never overwrites a
+  newer one.
+- **Whatever you type is legal.** FTS5 reads the query as an expression language, so
+  `AND`, `"`, `(`, `NEAR(` and a bare `*` are all syntax errors — and typing sends a
+  new query on every keystroke. Tokens are extracted and quoted rather than escaped,
+  so there is no operator left to get wrong.
+- **Hits say where they matched** — subject, in the thread, or in your chat — with the
+  words around the match highlighted
+- **Filterable by flag**, using the same Important / Urgent / Both bar as everywhere
+  else
+- **It repairs itself.** A database written before this phase is reindexed once on
+  launch, and Settings has a Rebuild button with the live entry count.
 
 ## What phase 6 adds
 
@@ -253,7 +277,6 @@ Press `?` in the panel for the full list.
   a 144-second sweep, so the Join button appears only where a link really came back.
 - **A sweep returns at most 25 events** over the next two days. On a dense week that is
   a real ceiling; the window shrinks before the limit bites.
-- **Search filters what is loaded.** SQLite FTS5 is phase 7.
 - **Commitments are illustrative.** Extraction is phase 8.
 - **Privacy detection is Windows-only.** The panic hotkey and the manual toggle work
   everywhere; the foreground watcher needs pywin32. Settings says which you have.
