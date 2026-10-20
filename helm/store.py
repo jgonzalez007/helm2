@@ -196,6 +196,22 @@ DEFAULT_SETTINGS = {
 _CREATE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", re.S)
 
 
+# Columns the user owns, not the source. A sweep rebuilds an Item from scratch, so
+# without this a Done or Snoozed click is undone by the next poll.
+_USER_OWNED = ("read_at", "replied_at", "snooze_until")
+
+
+def _upsert_set(col: str) -> str:
+    if col == "state":
+        # A source may still move an item between needs_me and waiting as the thread
+        # changes. It may not reopen something you closed.
+        return ("state=CASE WHEN item.state IN ('done','snoozed') "
+                "THEN item.state ELSE excluded.state END")
+    if col in _USER_OWNED:
+        return f"{col}=CASE WHEN item.{col}!='' THEN item.{col} ELSE excluded.{col} END"
+    return f"{col}=excluded.{col}"
+
+
 def _schema_columns() -> dict[str, dict[str, str]]:
     """{table: {column: declaration}} read straight from SCHEMA, so the two cannot drift."""
     tables: dict[str, dict[str, str]] = {}
@@ -301,7 +317,7 @@ class Store:
         d["last_seen_at"] = now_iso()
         cols = list(d.keys())
         placeholders = ",".join(f":{c}" for c in cols)
-        updates = ",".join(f"{c}=excluded.{c}" for c in cols if c not in ("id", "source"))
+        updates = ",".join(_upsert_set(c) for c in cols if c not in ("id", "source"))
         self._conn().execute(
             f"INSERT INTO item({','.join(cols)}, first_seen_at) "
             f"VALUES({placeholders}, :last_seen_at) "
@@ -342,6 +358,22 @@ class Store:
             args.append(v)
         args.append(item_id)
         self._conn().execute(f"UPDATE item SET {','.join(sets)} WHERE id=?", args)
+
+    def wake_snoozed(self, now: str | None = None) -> list[str]:
+        """Return snoozed items whose time has come, and put them back in the queue.
+
+        Without this a snooze is a delete: nothing else ever clears the state.
+        """
+        at = now or now_iso()
+        rows = self._conn().execute(
+            "SELECT id FROM item WHERE state='snoozed' AND snooze_until!='' "
+            "AND snooze_until<=?", (at,)).fetchall()
+        ids = [r["id"] for r in rows]
+        if ids:
+            self._conn().execute(
+                f"UPDATE item SET state='needs_me', snooze_until='' "
+                f"WHERE id IN ({','.join('?' * len(ids))})", ids)
+        return ids
 
     # ── flags ───────────────────────────────────────────────────────────────
 

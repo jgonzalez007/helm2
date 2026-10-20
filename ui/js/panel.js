@@ -20,6 +20,7 @@ const st = {
   schedule: {},
   voice: '',
   senders: [],
+  privacy: {},
   openItem: null,
   detail: null,
 };
@@ -77,9 +78,15 @@ setInterval(() => {
 
 // ── Data ──────────────────────────────────────────────────────────────────
 
-async function refresh() {
+async function refresh(attempt = 0) {
   const boot = await call('bootstrap');
-  if (!boot) return;
+  if (!boot) {
+    // The first call can land before the bridge can deliver a result, and a single
+    // failure used to leave the window on its static HTML for good. Retrying is safe
+    // because bootstrap only reads.
+    if (attempt < 8) setTimeout(() => refresh(attempt + 1), 600);
+    return;
+  }
   st.rows = boot.items || [];
   st.sources = boot.sources || [];
   st.shortcuts = boot.shortcuts || [];
@@ -89,14 +96,35 @@ async function refresh() {
   st.schedule = boot.schedule || {};
   st.voice = boot.voice || '';
   st.senders = boot.senders || [];
+  st.privacy = boot.privacy || st.privacy || {};
+  applyPrivacy();
   render();
 }
 
+function applyPrivacy() {
+  const p = st.privacy || {};
+  document.body.dataset.privacy = p.on ? '1' : '0';
+  const banner = el('privacy-banner');
+  if (banner) {
+    banner.querySelector('span').textContent = p.reason
+      ? `${p.reason}. Press Ctrl+Shift+\ to show the panel again.`
+      : 'Privacy mode is on. Press Ctrl+Shift+\ to show the panel again.';
+  }
+}
+
+on('privacy_changed', (p) => { st.privacy = p; applyPrivacy(); render(); });
 on('flag_changed', refresh);
 on('item_changed', refresh);
 on('source_status', refresh);
-on('meeting_in_5', (p) => {
-  // Meetings are allowed to interrupt; everything else only moves a badge.
+on('meeting_in_5', async (p) => {
+  // Meetings are allowed to interrupt; everything else only moves a badge. But not
+  // over a shared screen, a fullscreen app, or during quiet hours — Python decides,
+  // because it is the side that can see the foreground window.
+  const allowed = await call('may_interrupt');
+  if (allowed && !allowed.ok) {
+    console.info(`[helm] held back a meeting alert: ${allowed.reason}`);
+    return;
+  }
   call('open_panel');
   go('today');
   const note = document.createElement('div');
@@ -155,7 +183,7 @@ document.addEventListener('mouseover', (e) => {
 // ── The item drawer ───────────────────────────────────────────────────────
 
 const CHIPS = {
-  mail: ['draft reply', 'summarize', 'action items', 'remind me', 'create task'],
+  mail: ['draft reply', 'draft follow-up', 'summarize', 'action items', 'create task'],
   slack: ['draft reply', 'summarize', 'action items', 'post summary to Slack'],
   calendar: ['prep brief', 'summarize', 'propose new time', 'remind me'],
 };
@@ -254,9 +282,10 @@ window.helm = Object.assign(window.helm || {}, {
   },
   focusAsk() { el('ask').focus(); },
   go,
-  panic() {
-    const on = document.body.dataset.privacy === '1';
-    document.body.dataset.privacy = on ? '0' : '1';
+  async panic() {
+    st.privacy = (await call('set_privacy')) || st.privacy;
+    applyPrivacy();
+    render();
   },
 });
 
@@ -367,6 +396,12 @@ document.addEventListener('click', async (e) => {
   if (delSc) {
     const res = await call('delete_shortcut', Number(delSc.dataset.delSc));
     if (res) st.shortcuts = res.shortcuts;
+    return render();
+  }
+
+  if (t.closest('#privacy-toggle')) {
+    st.privacy = (await call('set_privacy')) || st.privacy;
+    applyPrivacy();
     return render();
   }
 
@@ -548,6 +583,11 @@ async function doFocusAction(action) {
   const current = queue[Math.min(st.focusIndex, queue.length - 1)];
   if (!current) return;
 
+  // `r` on a waiting item means chase it, not answer it — nobody has replied yet.
+  if (action === 'followup' || (action === 'reply' && current.item.state === 'waiting')) {
+    await openItem(current.item.id);
+    return sendChat('draft a follow-up — no reply since I sent this');
+  }
   if (action === 'reply') {
     await openItem(current.item.id);
     return sendChat('draft reply');

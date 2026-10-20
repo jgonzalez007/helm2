@@ -29,8 +29,11 @@ export function matchesFilter(flag, filter) {
   return true;
 }
 
+// Waiting items belong here too: the point of the tracker is that something you
+// sent and nobody answered comes back to you, with a follow-up ready to draft.
 export function focusRows(rows) {
-  return rows.filter((r) => r.item.state === 'needs_me' && r.item.source !== 'calendar');
+  return rows.filter((r) => ['needs_me', 'waiting'].includes(r.item.state)
+    && r.item.source !== 'calendar');
 }
 
 function row(r) {
@@ -122,6 +125,7 @@ export function viewFocus(st) {
   const i = Math.min(st.focusIndex, queue.length - 1);
   const { item, flag } = queue[i];
   const why = flag.reasons.map((r) => esc(r.detail)).join(' · ') || 'no rule matched';
+  const isWaiting = item.state === 'waiting';
 
   return `
     <div class="focus-card">
@@ -129,16 +133,23 @@ export function viewFocus(st) {
         <span class="focus-pos">Focus · ${i + 1} of ${queue.length}</span>
         ${badgePair(flag)}
         <span class="pill pill--waiting">${QUADRANT_LABEL[flag.quadrant]}</span>
+        ${isWaiting ? `<span class="pill pill--working">waiting
+          ${esc(rel(item.sent_by_me_at))}</span>` : ''}
       </div>
       <h3>${esc(item.subject)}</h3>
-      <div class="focus-from">${esc(item.sender)} · ${esc(item.sender_addr)}
-        · ${item.to_me_direct ? 'to: you' : 'cc only'} · ${rel(item.received_at)} ago</div>
+      <div class="focus-from">${isWaiting
+    ? `you sent this ${esc(rel(item.sent_by_me_at))} ago · no reply yet`
+    : `${esc(item.sender)} · ${esc(item.sender_addr)}
+        · ${item.to_me_direct ? 'to: you' : 'cc only'} · ${rel(item.received_at)} ago`}</div>
       <div class="focus-body">${esc(item.snippet)}</div>
       ${flag.posture_warning
     ? `<div class="d-warn">⚠ ${esc(flag.posture_warning)}</div>` : ''}
       <div class="focus-why"><b>why flagged</b> — ${why}</div>
       <div class="focus-actions">
-        <button class="btn btn--primary" data-focus-act="reply"><kbd>r</kbd> Reply</button>
+        ${isWaiting
+    ? '<button class="btn btn--primary" data-focus-act="followup"><kbd>r</kbd> '
+      + 'Draft follow-up</button>'
+    : '<button class="btn btn--primary" data-focus-act="reply"><kbd>r</kbd> Reply</button>'}
         <button class="btn" data-focus-act="done"><kbd>e</kbd> Done</button>
         <button class="btn" data-focus-act="snooze"><kbd>s</kbd> Snooze</button>
         <button class="btn" data-focus-act="delegate"><kbd>d</kbd> Delegate</button>
@@ -403,6 +414,35 @@ export function viewSettings(st) {
         ${check('reduced_motion', s.reduced_motion)}</div>
       <div class="field"><label>Sounds<small>off by default</small></label>
         ${check('sounds', s.sounds)}</div>
+    </div>
+
+    <div class="card">
+      <h3>Privacy</h3>
+      <p>The panel hides itself when something is on screen with you. What this can
+        honestly detect is the app in front — not whether you are sharing. Teams
+        gives no public signal for that, so HELM does not claim it.</p>
+      <div class="field">
+        <label>Right now<small>${esc(st.privacy?.watching
+    ? 'watching the foreground window, locally, every 1.5 s'
+    : 'automatic detection is Windows-only; the panic hotkey still works')}</small></label>
+        <span class="pill ${st.privacy?.on ? 'pill--alert' : 'pill--done'}">${
+  st.privacy?.on ? 'hidden' : 'visible'}</span>
+      </div>
+      ${st.privacy?.reason ? `<div class="field"><label>Reason
+        <small>${esc(st.privacy.reason)}${st.privacy.app
+    ? ` · ${esc(st.privacy.app)}` : ''}</small></label></div>` : ''}
+      <div class="field"><label>Hide automatically
+        <small>when a meeting app is in front, or a Zoom share is running</small></label>
+        ${check('privacy_auto', s.privacy_auto !== false)}</div>
+      <div class="field"><label>Apps that trigger it
+        <small>executable names, matched exactly</small></label>
+        ${list('privacy_apps', s.privacy_apps)}</div>
+      <div class="nextup-actions" style="margin-top:12px">
+        <button class="btn" id="privacy-toggle">${st.privacy?.on
+    ? 'Show the panel' : 'Hide the panel now'}</button>
+        <span style="align-self:center;color:var(--mute);font-size:12.5px">
+          or Ctrl+Shift+\\ from anywhere</span>
+      </div>
     </div>
 
     <div class="card">

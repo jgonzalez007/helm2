@@ -386,13 +386,16 @@ def test_backoff_and_recovery() -> None:
     s = sched.Scheduler(EventBus(), poll, ("calendar",), quiet=lambda: ("23:59", "23:58"))
     s._due["calendar"] = 0
 
-    # Three failures: the wait should grow, capped.
+    # Three failures: the wait should grow, capped. The base interval is pinned to a
+    # work-hours clock — off hours it already equals BACKOFF_CAP, which made this
+    # check pass or fail depending on what time of day it ran.
+    work_hours = datetime(2026, 10, 19, 10, 0)
     waits = []
     for _ in range(3):
         s._due["calendar"] = 0
         before = s._backoff["calendar"]
-        poll_ok = poll("calendar")
-        base = sched.interval_for("calendar", datetime.now())
+        poll("calendar")
+        base = sched.interval_for("calendar", work_hours)
         s._backoff["calendar"] = min(sched.BACKOFF_CAP, (before * 2) or base)
         waits.append(s._backoff["calendar"])
     check("backoff grows", waits == sorted(waits) and waits[0] < waits[-1], str(waits))

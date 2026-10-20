@@ -155,10 +155,11 @@ def main() -> int:
             "poll", "resync", "schedule_info", "watch_meetings", "close",
             "rebuild_voice", "classify_ambiguous", "forget_sender",
             "learned_senders",
+            "privacy_state", "set_privacy", "may_interrupt",
         }
         check("no unexpected names are reachable from JS", surface == expected,
               f"extra={sorted(surface - expected)} missing={sorted(expected - surface)}")
-        for leaked in ("store", "bus", "sources", "island", "panel"):
+        for leaked in ("store", "bus", "sources", "island", "panel", "privacy"):
             check(f"'{leaked}' is not on the JS surface", leaked not in surface)
 
         print("demo reset")

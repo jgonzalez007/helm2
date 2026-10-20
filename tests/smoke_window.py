@@ -116,6 +116,43 @@ def probe(api: A.Api) -> None:
         time.sleep(0.4)
         RESULT["tooltip"] = api._panel.evaluate_js(
             "document.getElementById('tooltip').innerText.replace(/\\n/g,' | ')")
+        # Phase 6: privacy blur, and the focus queue carrying a waiting item.
+        api._panel.evaluate_js("window.helm.panic()")
+        for _ in range(20):
+            time.sleep(0.3)
+            if api._panel.evaluate_js("document.body.dataset.privacy") == '1':
+                break
+        RESULT["privacy_on"] = api._panel.evaluate_js("document.body.dataset.privacy")
+        RESULT["privacy_banner"] = api._panel.evaluate_js(
+            "getComputedStyle(document.getElementById('privacy-banner')).display")
+        RESULT["island_blurred"] = api._island.evaluate_js(
+            "document.body.dataset.privacy")
+        RESULT["main_blurred"] = api._panel.evaluate_js(
+            "getComputedStyle(document.getElementById('main')).filter")
+        api._panel.evaluate_js("window.helm.panic()")
+        for _ in range(20):
+            time.sleep(0.3)
+            if api._panel.evaluate_js("document.body.dataset.privacy") == '0':
+                break
+        RESULT["privacy_off"] = api._panel.evaluate_js("document.body.dataset.privacy")
+
+        api._panel.evaluate_js(
+            "document.getElementById('drawer').dataset.open='0';window.helm.go('focus')")
+        time.sleep(0.6)
+        RESULT["focus_card"] = api._panel.evaluate_js(
+            "document.querySelectorAll('.focus-card').length")
+        # A waiting item is not necessarily last, so walk the whole queue.
+        cards = []
+        for _ in range(12):
+            cards.append(api._panel.evaluate_js(
+                "document.querySelector('.focus-card').innerText"
+                ".split(String.fromCharCode(10)).join(' | ')"))
+            api._panel.evaluate_js("document.dispatchEvent("
+                                   "new KeyboardEvent('keydown',{key:'j',bubbles:true}))")
+            time.sleep(0.25)
+        RESULT["focus_queue_len"] = len({c.split(" | ")[0] for c in cards if c})
+        RESULT["focus_followup"] = next(
+            (c[:170] for c in cards if c and "Draft follow-up" in c), "")
     except Exception as e:
         RESULT["error"] = f"{type(e).__name__}: {e}"
     finally:
@@ -177,7 +214,18 @@ def main() -> int:
           and RESULT.get("approval_body_visible") is True
           # An approval card must exist while nothing has been sent.
           and RESULT.get("sends_before_click") == 0
-          and "not read" in (RESULT.get("tooltip") or ""))
+          and "not read" in (RESULT.get("tooltip") or "")
+          # Privacy mode blurs both windows and shows its banner, then releases.
+          and RESULT.get("privacy_on") == "1"
+          and RESULT.get("privacy_banner") == "flex"
+          and RESULT.get("island_blurred") == "1"
+          and "blur" in (RESULT.get("main_blurred") or "")
+          and RESULT.get("privacy_off") == "0"
+          # The focus queue reaches a waiting item and offers to chase it.
+          and RESULT.get("focus_card") == 1
+          and bool(RESULT.get("focus_followup"))
+          # The island has to paint its counts, not just load its module.
+          and bool(RESULT.get("island_counts")))
     print("\nPASS" if ok else "\nFAIL — the UI loaded but did not render as expected")
     return 0 if ok else 1
 

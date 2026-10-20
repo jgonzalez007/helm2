@@ -113,9 +113,15 @@ setInterval(() => {
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 
-async function refresh() {
+async function refresh(attempt = 0) {
   const boot = await call('bootstrap');
-  if (!boot) return;
+  if (!boot) {
+    // The first call can land before the bridge can deliver a result, and a single
+    // failure used to leave the window on its static HTML for good. Retrying is safe
+    // because bootstrap only reads.
+    if (attempt < 8) setTimeout(() => refresh(attempt + 1), 600);
+    return;
+  }
   rows = boot.items || [];
   sources = boot.sources || [];
   const s = boot.settings || {};
@@ -124,12 +130,14 @@ async function refresh() {
   document.body.dataset.professional = s.professional_mode ? '1' : '0';
   wheel.muted = Boolean(s.professional_mode);
   wheel.reduced = Boolean(s.reduced_motion);
+  document.body.dataset.privacy = boot.privacy?.on ? '1' : '0';
   render();
 }
 
 on('source_status', refresh);
 on('flag_changed', refresh);
 on('item_changed', refresh);
+on('privacy_changed', (p) => { document.body.dataset.privacy = p.on ? '1' : '0'; });
 
 window.helm = Object.assign(window.helm || {}, {
   // Pins the island open. Used by tests/screenshots.py, which otherwise races the
@@ -138,8 +146,9 @@ window.helm = Object.assign(window.helm || {}, {
     clearTimeout(timer);
     setState('compact');
   },
-  panic() {
-    document.body.dataset.privacy = document.body.dataset.privacy === '1' ? '0' : '1';
+  async panic() {
+    const p = await call('set_privacy');
+    if (p) document.body.dataset.privacy = p.on ? '1' : '0';
   },
 });
 

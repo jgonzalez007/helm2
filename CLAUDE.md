@@ -139,6 +139,7 @@ mcp__claude_ai_Slack__slack_read_channel
 | prep brief, cold session | 46 s |
 | prep brief follow-up, warm session | 7.6 s |
 | meeting countdown (local timer) | < 1 ms |
+| foreground-window check (privacy) | < 1 ms, every 1.5 s |
 
 A mail sweep measured 197 s, 232 s and **242 s** against the shared 240 s timeout,
 and the third run timed out and reported an empty inbox. `MailSource.SWEEP_TIMEOUT`
@@ -273,6 +274,37 @@ Nothing is eval'd; no returned string is used as a path, command or recipient.
 - Live mode never pads a missing source with fixtures. Unbuilt sources report
   `unavailable` and name their phase.
 
+### A sweep must never undo a click
+
+`upsert_item` rebuilds a row from the source on every poll, so `state`,
+`read_at`, `replied_at` and `snooze_until` are excluded from the overwrite —
+otherwise marking something Done or Snoozed is reversed by the next sweep, which
+is exactly what happened before phase 6. A source may still move an untouched
+item between `needs_me` and `waiting`; it may not reopen something you closed.
+`store._upsert_set` holds the rule, `tests/test_phase6.py` asserts it.
+
+A snooze also has to end. `store.wake_snoozed` is the only thing that clears one,
+driven by `watch_meetings`, which therefore runs in demo mode too.
+
+### Privacy claims only what it can see
+
+`privacy.decide()` reads the foreground window's **executable**, never its title:
+a title is written by whoever sent the invite. A meeting app in front means "a
+meeting is on screen", which is what the UI says — not "you are screen sharing",
+which Windows gives no public signal for. Zoom's `cpthost.exe` is a genuine share
+signal and is the only thing described as one.
+
+Manual always wins: the panic hotkey can hide the panel when nothing triggered it,
+and the watcher can never reveal a manual hide. Python owns the state so both
+windows agree; a per-window CSS flag drifted.
+
+### The UI must survive a bridge that is not ready
+
+The first `bootstrap()` from a window can land before pywebview can deliver a
+result. A single failure used to leave that window on its static HTML forever —
+the island looked permanently empty. `refresh()` retries, which is safe because
+`bootstrap` only reads. Never add a retry to anything that writes.
+
 ### Needs-reply is structural, like the flags
 
 `mail_source.needs_reply()` asks who sent the newest message in the conversation,
@@ -306,7 +338,8 @@ helm/
   bus.py            in-process event bus
   store.py          sqlite schema + queries (one file, WAL)
   models.py         Item, Flag, SourceStatus, ApprovalToken, Draft
-  flags.py          stage-1 deterministic rules (stage 2 = phase 5)
+  flags.py          stage-1 deterministic rules (stage 2 = classifier.py)
+  privacy.py        foreground-window watcher; decide() is pure and testable
   app.py            pywebview windows + the JS bridge API
   tray.py           system tray, degrades to no-op
   hotkeys.py        global hotkeys, degrades to no-op

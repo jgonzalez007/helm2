@@ -27,7 +27,8 @@ from .connectors.pending import PendingSource
 from .connectors.slack_source import SlackSource
 from .hotkeys import BINDINGS, Hotkeys
 from .models import ApprovalToken, Flag, Item, SourceStatus, now_iso
-from .scheduler import Scheduler
+from .privacy import MEETING_APPS, PrivacyWatcher
+from .scheduler import Scheduler, in_quiet_hours
 from .store import Store
 from .tray import Tray
 
@@ -60,6 +61,11 @@ class Api:
         self._island = None
         self._panel = None
         self._chat_lock = threading.Lock()
+        self._privacy = PrivacyWatcher(
+            bus,
+            enabled=lambda: bool(self._store.get_setting("privacy_auto", True)),
+            apps=lambda: set(self._store.get_setting("privacy_apps") or MEETING_APPS),
+        )
 
     def _build_sources(self) -> dict:
         if self._demo:
@@ -88,6 +94,33 @@ class Api:
     def hide_panel(self) -> None:
         if self._panel is not None:
             self._panel.hide()
+
+    # ── privacy ─────────────────────────────────────────────────────────────
+
+    def privacy_state(self) -> dict:
+        return self._privacy.state().to_dict()
+
+    def set_privacy(self, on: bool | None = None) -> dict:
+        """The panic hotkey and the manual toggle. Python owns the truth so both
+        windows agree — a per-window CSS flag would drift."""
+        return self._privacy.set_manual(on).to_dict()
+
+    def may_interrupt(self) -> dict:
+        """Whether the island is allowed to pop. Checked before every interruption.
+
+        A notification during a shared screen or over a fullscreen app is the one
+        kind HELM can actually do harm with, so each refusal names its reason.
+        """
+        st = self._privacy.state()
+        if st.on:
+            return {"ok": False, "reason": st.reason or "privacy mode is on"}
+        if self._privacy.foreground_is_fullscreen:
+            return {"ok": False, "reason": "a fullscreen app is in front"}
+        quiet = self._store.get_setting("quiet_hours") or {}
+        if in_quiet_hours(datetime.now(), quiet.get("start", "19:00"),
+                          quiet.get("end", "07:00")):
+            return {"ok": False, "reason": "quiet hours"}
+        return {"ok": True, "reason": ""}
 
     def resize_island(self, height: int) -> None:
         """The island grows and shrinks with its content; the UI knows the height."""
@@ -270,18 +303,19 @@ class Api:
             "schedule": self.schedule_info(),
             "voice": describe_voice(self._store.get_setting("voice_profile", {})),
             "senders": self.learned_senders(),
+            # Carried here rather than fetched separately: two bridge round-trips at
+            # boot raced each other and left the island unrendered.
+            "privacy": self.privacy_state(),
         }
 
     def list_items(self) -> list[dict]:
-        out = []
-        for item in self._store.items():
-            flag = self._store.flag(item.id) or Flag(item_id=item.id)
-            out.append({"item": item.to_dict(), "flag": flag.to_dict()})
-        out.sort(key=lambda r: flagmod.focus_sort_key(
-            self._store.flag(r["item"]["id"]) or Flag(item_id=r["item"]["id"]),
-            self._store.item(r["item"]["id"]) or Item(id="", source="mail", kind="email", subject=""),
-        ))
-        return out
+        # Sort on the objects already in hand. Re-reading the store inside the sort
+        # key cost four queries per row, and both windows call this at launch, which
+        # is what made the island take seconds to paint.
+        pairs = [(item, self._store.flag(item.id) or Flag(item_id=item.id))
+                 for item in self._store.items()]
+        pairs.sort(key=lambda p: flagmod.focus_sort_key(p[1], p[0]))
+        return [{"item": item.to_dict(), "flag": flag.to_dict()} for item, flag in pairs]
 
     def item_detail(self, item_id: str) -> dict:
         item = self._store.item(item_id)
@@ -309,6 +343,9 @@ class Api:
                                    if hasattr(src, "reply_reason") else ""),
             "voice": describe_voice(self._store.get_setting("voice_profile", {})),
             "senders": self.learned_senders(),
+            # Carried here rather than fetched separately: two bridge round-trips at
+            # boot raced each other and left the island unrendered.
+            "privacy": self.privacy_state(),
             # What the chat drawer is allowed to attach, stated rather than implied.
             "attached": [
                 {"label": "this message", "included": True},
@@ -344,8 +381,7 @@ class Api:
         if state == "done":
             extra["replied_at"] = now_iso()
         if state == "snoozed":
-            extra["snooze_until"] = (datetime.now(timezone.utc) + timedelta(hours=18)) \
-                .isoformat(timespec="seconds")
+            extra["snooze_until"] = _next_morning().isoformat(timespec="seconds")
         self._store.set_item_state(item_id, state, **extra)
         self._store.log_action("state", item_id, "local", state, "done")
         self._bus.publish("item_changed", {"item_id": item_id, "state": state})
@@ -630,6 +666,11 @@ class Api:
         warned: set[str] = set()
         while self._scheduler is None or not self._scheduler._stop.is_set():
             now = datetime.now().astimezone()
+            # A snooze that never ends is a delete. This tick is the only thing that
+            # brings one back, and it is local and free.
+            woken = self._store.wake_snoozed()
+            if woken:
+                self._bus.publish("item_changed", {"woken": woken})
             for item in self._store.items(source="calendar"):
                 if item.id in warned or not item.starts_at:
                     continue
@@ -678,6 +719,18 @@ class Api:
 # attribute: pywebview exposes every public attribute of js_api to JavaScript.
 _WRITE_INTENTS = ("draft reply", "reply", "propose new time", "post summary",
                   "follow up", "nudge", "delegate")
+
+def _next_morning(now: datetime | None = None) -> datetime:
+    """Snooze lands at 08:00 local, today if it has not happened yet.
+
+    A fixed offset such as "18 hours" puts items back at whatever hour you happened
+    to snooze them, which is how a snooze stops meaning anything. Smart snooze
+    ("after my 2pm", "when they reply") is a later phase.
+    """
+    local = (now or datetime.now()).astimezone()
+    target = local.replace(hour=8, minute=0, second=0, microsecond=0)
+    return target if target > local else target + timedelta(days=1)
+
 
 _STOPWORDS = {"the", "and", "for", "you", "your", "with", "from", "this", "that", "need",
               "needed", "please", "re", "fwd"}
@@ -745,7 +798,7 @@ def run(demo: bool = True, db_path: str | None = None) -> None:
     keys.on("toggle_panel", api.open_panel)
     keys.on("ask_bar", lambda: (api.open_panel(), api._push("helm.focusAsk()")))
     keys.on("focus_queue", lambda: (api.open_panel(), api._push("helm.go('focus')")))
-    keys.on("panic", lambda: api._push("helm.panic()"))
+    keys.on("panic", lambda: api.set_privacy())
 
     scheduler = Scheduler(
         bus, api.poll, tuple(api._sources),
@@ -755,6 +808,7 @@ def run(demo: bool = True, db_path: str | None = None) -> None:
 
     def quit_app() -> None:
         scheduler.stop()
+        api._privacy.stop()
         keys.stop()
         tray.stop()
         api.close()
@@ -770,10 +824,13 @@ def run(demo: bool = True, db_path: str | None = None) -> None:
                    on_settings=lambda: (api.open_panel(), api._push("helm.go('settings')")),
                    on_quit=quit_app)
         keys.start()
+        api._privacy.start()
+        # Runs in demo mode too: it is local, free, and the only thing that ends a
+        # snooze.
+        threading.Thread(target=api.watch_meetings, daemon=True,
+                         name="helm-meetings").start()
         if not demo:
             scheduler.start()
-            threading.Thread(target=api.watch_meetings, daemon=True,
-                             name="helm-meetings").start()
 
     webview.start(start_background, private_mode=False,
                   storage_path=str(Store(db_path).path.parent / "webview"),

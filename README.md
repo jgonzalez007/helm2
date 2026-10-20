@@ -4,9 +4,10 @@ A local-first desktop command center for one person's work day: Outlook mail and
 calendar, Slack, two-axis importance/urgency flags, per-item chat, daily summaries,
 and a shortcuts panel. One Python codebase, Windows and macOS, **no npm**.
 
-Phases 1 to 5 of 11 are complete: the whole UI on fixtures, plus a real read-only
-calendar and real mail — triage, needs-reply detection and drafts in your own
-voice — through the connectors your organization already approved.
+Phases 1 to 6 of 11 are complete: the whole UI on fixtures, a real read-only
+calendar, real mail and real Slack — triage, needs-reply detection and drafts in your
+own voice — through the connectors your organization already approved, plus the focus
+queue, automatic privacy mode and the waiting-on tracker.
 
 ## Run it
 
@@ -78,6 +79,10 @@ the real cadence, the next sweep and the measured round-trip.
 .\.venv\Scripts\python.exe -m tests.test_phase5
 ```
 
+```bash
+.\.venv\Scripts\python.exe -m tests.test_phase6
+```
+
 Needs a display:
 
 ```bash
@@ -109,8 +114,9 @@ input, polling cadence and the tool allowlists. `smoke_window` opens the real
 windows, drives the UI and reads the rendered DOM back — it needs a display.
 `test_phase3` (154 checks) covers mail parsing, needs-reply, waiting-on and the voice
 profile. `test_phase4` (115 checks) covers Slack parsing, broadcasts versus mentions and Slack drafts. `test_phase5` (72 checks) covers stage-2 classification, its caching, and
-the two limits above. `live_calendar`, `live_mail` and `live_classify` each do one real pass against your
-own data.
+the two limits above. `test_phase6` (60 checks) covers the privacy rules, snooze, and that a sweep cannot
+undo a click. `live_calendar`, `live_mail` and `live_classify` each do one real pass
+against your own data.
 
 ## What phase 1 gives you
 
@@ -141,6 +147,26 @@ Press `?` in the panel for the full list.
 | `j` `k` | move through the focus queue |
 | `r` `e` `s` `d` | reply, done, snooze, delegate |
 | `?` | keyboard overlay |
+
+## What phase 6 adds
+
+- **Automatic privacy mode.** The panel hides itself when a meeting app is in the
+  foreground, locally, from one window handle every 1.5 s. No connector call, no cost.
+- **It does not claim what it cannot see.** Teams gives no public signal for "you are
+  sharing right now", so HELM says "a meeting app is in the foreground" instead.
+  Zoom's `cpthost.exe` is a real share signal and is named as one.
+- **A window title can never trigger it.** A title is written by whoever sent the
+  invite; only the executable name counts.
+- **Nothing interrupts over a shared screen, a fullscreen app, or during quiet
+  hours.** Every refusal names its reason in the console rather than vanishing.
+- **A snooze ends.** It lands at 08:00 local and a local timer puts the item back.
+  A fixed offset returned things at whatever hour you happened to click.
+- **Waiting-on reaches the focus queue** with `r` bound to "draft a follow-up" rather
+  than "reply" — nobody has replied yet, so there is nothing to answer.
+- **A sweep can no longer undo a click.** This was a real bug: every poll rebuilt each
+  item from scratch and overwrote `state`, silently reopening anything marked Done or
+  Snoozed. The store now treats `state`, `read_at`, `replied_at` and `snooze_until`
+  as yours, not the source's.
 
 ## What phase 4 adds
 
@@ -229,8 +255,8 @@ Press `?` in the panel for the full list.
   a real ceiling; the window shrinks before the limit bites.
 - **Search filters what is loaded.** SQLite FTS5 is phase 7.
 - **Commitments are illustrative.** Extraction is phase 8.
-- **Privacy mode is manual.** The panic hotkey and blur work; automatic
-  screen-share and meeting-foreground detection is phase 6.
+- **Privacy detection is Windows-only.** The panic hotkey and the manual toggle work
+  everywhere; the foreground watcher needs pywin32. Settings says which you have.
 - **macOS is unverified.** Written from the docs, never run on a Mac.
 
 ## Why no npm, and why pywebview is pinned
