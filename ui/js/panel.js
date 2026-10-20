@@ -23,6 +23,7 @@ const st = {
   privacy: {},
   search: {},
   summaries: {},
+  realtime: null,
   results: [],
   queryToken: 0,
   openItem: null,
@@ -103,6 +104,7 @@ async function refresh(attempt = 0) {
   st.privacy = boot.privacy || st.privacy || {};
   st.search = boot.search || st.search || {};
   st.summaries = boot.summaries || st.summaries || {};
+  st.realtime = boot.realtime || null;
   applyPrivacy();
   render();
 }

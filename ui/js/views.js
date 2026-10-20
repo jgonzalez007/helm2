@@ -527,6 +527,35 @@ export function viewSettings(st) {
         ${check('sounds', s.sounds)}</div>
     </div>
 
+    ${st.realtime ? `<div class="card">
+      <h3>Realtime paths</h3>
+      <p>Every other mail path here is a 2–5 minute poll. These two are the only
+        ways to get seconds, and both say plainly whether they work on this machine.</p>
+      <div class="field">
+        <label>Drop folder<small>${esc(st.realtime.dropfolder.folder
+    || 'not configured')}</small></label>
+        <span class="pill ${st.realtime.dropfolder.status?.health === 'live'
+    ? 'pill--done' : 'pill--alert'}">${esc(
+  st.realtime.dropfolder.status?.health || 'unknown')}</span>
+      </div>
+      ${st.realtime.dropfolder.status?.last_error
+    ? `<div class="field"><label>Why<small>${esc(
+      st.realtime.dropfolder.status.last_error)}</small></label></div>` : `
+      <div class="field"><label>Files read<small>${
+  st.realtime.dropfolder.rejected} rejected and kept for inspection</small></label>
+        <span class="pill">${st.realtime.dropfolder.seen}</span></div>`}
+      <div class="field">
+        <label>Classic Outlook<small>${esc(
+    st.realtime.outlook_desktop.detection?.detail
+      || st.realtime.outlook_desktop.detection?.reason || '')}</small></label>
+        <span class="pill ${st.realtime.outlook_desktop.status?.health === 'live'
+    ? 'pill--done' : 'pill--alert'}">${esc(
+  st.realtime.outlook_desktop.status?.health || 'unknown')}</span>
+      </div>
+      <div class="field"><label>What would change it<small>${esc(
+    st.realtime.outlook_desktop.detection?.remedy || '')}</small></label></div>
+    </div>` : ''}
+
     <div class="card">
       <h3>Privacy</h3>
       <p>The panel hides itself when something is on screen with you. What this can
@@ -648,9 +677,15 @@ export function viewSettings(st) {
     </div>`;
 }
 
+// The header shows the three sources you read. The realtime paths live in
+// Settings, where their status comes with the reason and the remedy.
+const HEADER_SOURCES = ['mail', 'slack', 'calendar'];
+
 export function header(st) {
   const g = `${greeting()}, Jose <span>· ${longDate()}</span>`;
-  const statuses = (st.sources || []).map((src) => `<span class="status"
+  const statuses = (st.sources || [])
+    .filter((src) => HEADER_SOURCES.includes(src.source))
+    .map((src) => `<span class="status"
     data-tip-source="${esc(src.source)}">
     <span class="dot dot--${esc(src.health)}"></span>${esc(src.source)} ${esc(freshness(src))}
   </span>`).join('');

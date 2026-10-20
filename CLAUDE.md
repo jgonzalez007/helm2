@@ -298,6 +298,30 @@ nothing. `summaries.py` carries a `shortcut:` note naming exactly what it misses
 there is nothing to count. A zero there reads as a measurement, which is the same
 class of lie as labelling polled data "live".
 
+### Only the source that owns the whole list may retire from it
+
+`Api.poll` calls `_retire_missing` only when the connector sets
+`retires_missing` (default True). Two-way sync works by treating "not returned
+this sweep" as "handled elsewhere", which is right for a source that returns the
+entire list and catastrophic for one that returns a single notification.
+`DropFolderSource` stamps its items `source="mail"`, so without the flag one drop
+sweep would mark the whole inbox done.
+
+### A drop file is written by whoever can write the folder
+
+`dropfolder.py` coerces every field through `_clean`, caps the file size before
+parsing, bounds a sweep to 50 files, and moves anything it cannot read to
+`rejected/` instead of retrying it forever. No string from a drop file is used as
+a path, a command or a recipient, and ids are namespaced `drop-` so a flow cannot
+collide with a connector's own.
+
+### HELM never launches classic Outlook
+
+`win32com.client.Dispatch("Outlook.Application")` *starts* Outlook. On a machine
+with no MAPI profile — this one — that means a configuration wizard appearing
+unprompted. `outlook_desktop.py` only ever calls `GetActiveObject`, and
+`tests/test_phase9.py` asserts no `.Dispatch(` call exists in the file.
+
 ### A search box is a parser, and the parser is the defence
 
 FTS5 reads `MATCH` as an expression language. `AND`, `OR`, `"`, `(`, `NEAR(` and a
@@ -398,6 +422,8 @@ helm/
     claude_source.py  CalendarSource (phase 2)
     mail_source.py    MailSource (phase 3)
     slack_source.py   SlackSource (phase 4)
+    dropfolder.py     DropFolderSource — a watched OneDrive folder (phase 9)
+    outlook_desktop.py  detector; unavailable on this machine, and says why
     pending.py      sources that are not built yet, and say so
 ui/                 static HTML/CSS/JS, no build step
 tests/              assert-based self-checks, no test runner needed

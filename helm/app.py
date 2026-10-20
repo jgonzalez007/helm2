@@ -22,6 +22,9 @@ from .bus import EventBus
 from .connectors.base import SendRefused
 from .connectors.claude_source import CalendarSource
 from .connectors.demo import DEMO_SETTINGS, DemoSource
+from .connectors import dropfolder
+from .connectors.dropfolder import DropFolderSource
+from .connectors.outlook_desktop import OutlookDesktopSource
 from .connectors.mail_source import MailSource, describe_voice
 from .connectors.pending import PendingSource
 from .connectors.slack_source import SlackSource
@@ -79,6 +82,11 @@ class Api:
             "slack": SlackSource(ME, domains, self._availability,
                                  store=self._store),
             "calendar": CalendarSource(ME, domains, self._availability),
+            # The two realtime paths. Both report unavailable on a machine where
+            # they cannot work, and neither ever fabricates a row.
+            "dropfolder": DropFolderSource(
+                self._store.get_setting("dropfolder_path") or None, tuple(domains)),
+            "outlook_desktop": OutlookDesktopSource(),
         }
 
     # ── windows ─────────────────────────────────────────────────────────────
@@ -191,7 +199,10 @@ class Api:
 
         # Two-way sync: anything the source stopped returning was handled elsewhere.
         st = src.status()
-        if st.health == "live":
+        # Two-way sync belongs to the source that owns the whole list. The drop
+        # folder returns one notification at a time and stamps them source="mail",
+        # so retiring on its sweep would mark the entire inbox handled.
+        if st.health == "live" and getattr(src, "retires_missing", True):
             self._retire_missing(source, seen)
 
         if not st.measured_latency_ms:
@@ -281,6 +292,24 @@ class Api:
         self.sync()
         return {"ok": True, "queued": False}
 
+    def realtime_info(self) -> dict:
+        """What the two seconds-latency paths can actually do on this machine."""
+        drop = self._sources.get("dropfolder")
+        desk = self._sources.get("outlook_desktop")
+        return {
+            "dropfolder": {
+                "folder": str(getattr(drop, "folder", "") or ""),
+                "status": drop.status().to_dict() if drop else None,
+                "seen": getattr(getattr(drop, "state", None), "seen", 0),
+                "rejected": getattr(getattr(drop, "state", None), "rejected", 0),
+                "setup": dropfolder.SETUP,
+            },
+            "outlook_desktop": {
+                "status": desk.status().to_dict() if desk else None,
+                "detection": desk.detection.to_dict() if desk else None,
+            },
+        }
+
     def schedule_info(self) -> dict:
         """What Settings shows: the real cadence and the measured latency, not a promise."""
         info = self._scheduler.describe() if self._scheduler else {"sources": {}}
@@ -312,6 +341,7 @@ class Api:
             "search": {"available": self._store.search_available,
                        "indexed": self._store.search_size()},
             "summaries": self.summaries(),
+            "realtime": self.realtime_info() if not self._demo else None,
         }
 
     def list_items(self) -> list[dict]:
@@ -425,6 +455,7 @@ class Api:
             "search": {"available": self._store.search_available,
                        "indexed": self._store.search_size()},
             "summaries": self.summaries(),
+            "realtime": self.realtime_info() if not self._demo else None,
             # What the chat drawer is allowed to attach, stated rather than implied.
             "attached": [
                 {"label": "this message", "included": True},

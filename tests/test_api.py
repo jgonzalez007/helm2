@@ -158,6 +158,7 @@ def main() -> int:
             "privacy_state", "set_privacy", "may_interrupt",
             "search", "reindex",
             "summaries", "refresh_commitments", "set_commitment_state",
+            "realtime_info",
         }
         check("no unexpected names are reachable from JS", surface == expected,
               f"extra={sorted(surface - expected)} missing={sorted(expected - surface)}")

@@ -4,10 +4,10 @@ A local-first desktop command center for one person's work day: Outlook mail and
 calendar, Slack, two-axis importance/urgency flags, per-item chat, daily summaries,
 and a shortcuts panel. One Python codebase, Windows and macOS, **no npm**.
 
-Phases 1 to 8 of 11 are complete: the whole UI on fixtures, a real read-only
+Phases 1 to 9 of 11 are complete: the whole UI on fixtures, a real read-only
 calendar, real mail and real Slack — triage, needs-reply detection and drafts in your
 own voice — through the connectors your organization already approved, plus the focus
-queue, automatic privacy mode, the waiting-on tracker, unified local search, and daily summaries.
+queue, automatic privacy mode, the waiting-on tracker, unified local search, daily summaries, and the realtime paths.
 
 ## Run it
 
@@ -91,6 +91,10 @@ the real cadence, the next sweep and the measured round-trip.
 .\.venv\Scripts\python.exe -m tests.test_phase8
 ```
 
+```bash
+.\.venv\Scripts\python.exe -m tests.test_phase9
+```
+
 Needs a display:
 
 ```bash
@@ -126,8 +130,9 @@ the two limits above. `test_phase6` (60 checks) covers the privacy rules, snooze
 undo a click. `test_phase7` (97 checks) covers the search index and the query builder,
 including 28 inputs that are FTS5 syntax errors if passed through raw.
 `test_phase8` (81 checks) covers commitment extraction, the summaries and the
-metrics. `live_calendar`, `live_mail` and `live_classify` each do one real pass
-against your own data.
+metrics. `test_phase9` (62 checks) covers the Outlook detector and the drop folder,
+including nine hostile files. `live_calendar`, `live_mail` and `live_classify` each
+do one real pass against your own data.
 
 ## What phase 1 gives you
 
@@ -158,6 +163,30 @@ Press `?` in the panel for the full list.
 | `j` `k` | move through the focus queue |
 | `r` `e` `s` `d` | reply, done, snooze, delegate |
 | `?` | keyboard overlay |
+
+## What phase 9 adds
+
+Reduced on purpose. The original point of this phase was seconds-latency mail via
+classic Outlook COM, which cannot work here. What survives is the honest version.
+
+- **`OutlookDesktopSource` says exactly why it cannot work**, in one of four states:
+  pywin32 missing, no MAPI profile, Outlook not running, or attached. On this machine
+  it is the second, and it names the remedy — there isn't one, because new Outlook
+  exposes no COM API.
+- **It never launches Outlook.** `Dispatch()` would start classic Outlook, which on a
+  machine with no profile opens a setup wizard out of nowhere. It attaches to a
+  running instance or reports unavailable. A check asserts `Dispatch` is never called.
+- **A drop folder watcher** — the only sub-minute mail path left open to you. A Power
+  Automate flow writes one small JSON file per new mail into OneDrive; HELM reads the
+  folder locally. No app registration, no token, no API client.
+- **Polls every 20 seconds** in work hours, because a directory listing is free. Mail
+  stays at 10 minutes because every sweep there is a model turn.
+- **Those files are hostile input.** Every field is coerced and bounded, a file that
+  cannot be parsed is moved to `rejected/` rather than retried forever, oversized
+  files are rejected without being parsed, and one sweep is capped at 50 files.
+- **A notification source never retires your inbox.** Drop-folder items are stamped
+  `source="mail"`, so a sweep that retired by source would mark every real mail
+  handled. That was a live bug this phase exposed and fixed.
 
 ## What phase 8 adds
 
