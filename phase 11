@@ -1,0 +1,26 @@
+One — phase 11, and it’s optional.
+
+Release 1 is done. Phases 1–10 are built, committed and pushed. The definition of done you wrote is met.
+
+Phase 11 was never a phase in the same sense — it’s the “later features, one at a time” list, meant to be picked from after release:
+
+	Later feature
+1	Topic threads — group mail, Slack and meetings about one customer or deal
+2	People cards — last interactions, open items, what you owe them
+3	Smart snooze — “after my 2pm”, “when they reply”
+4	Reply templates with variables and rules
+5	Calendar protection — back-to-back warnings, one-click focus blocks
+
+Plus batched digests, quick-capture hotkey, and meeting lifecycle (prep before, follow-up draft after).
+
+My recommendation: don’t start phase 11 yet. Run --live for a week first. Three things in the current build are guesses that real use will correct, and building on top of them now means building on sand:
+
+Search ranking is untuned bm25 — demo data is too small to tell whether the ordering feels right on a real mailbox.
+Commitment extraction is deterministic string matching. The shortcut: comment in summaries.py names what it misses; a week of your real sent mail tells you whether that list needs the model.
+The privacy app list came from documentation, not observation. One Teams call confirms or corrects it.
+
+Next: run it live for a few days, then tell me which of the five you want.
+
+cd C:\Users\jose.gonzalez\helm2; .\.venv\Scripts\python.exe run.py --live
+
+Phase 11 has no fixed scope, so “one phase missing” overstates it — it’s a menu of eight items you pick from, not a block of work with a finish line. Also still unverified: the privacy watcher against a real meeting app, and anything on macOS.
