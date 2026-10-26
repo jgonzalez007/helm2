@@ -4,10 +4,10 @@ A local-first desktop command center for one person's work day: Outlook mail and
 calendar, Slack, two-axis importance/urgency flags, per-item chat, daily summaries,
 and a shortcuts panel. One Python codebase, Windows and macOS, **no npm**.
 
-Phases 1 to 9 of 11 are complete: the whole UI on fixtures, a real read-only
+Phases 1 to 10 of 11 are complete: the whole UI on fixtures, a real read-only
 calendar, real mail and real Slack — triage, needs-reply detection and drafts in your
 own voice — through the connectors your organization already approved, plus the focus
-queue, automatic privacy mode, the waiting-on tracker, unified local search, daily summaries, and the realtime paths.
+queue, automatic privacy mode, the waiting-on tracker, unified local search, daily summaries, the realtime paths, and sending.
 
 ## Run it
 
@@ -45,8 +45,8 @@ If Microsoft 365 says `connected`:
 .\.venv\Scripts\python.exe run.py --live
 ```
 
-Your real calendar, mail and Slack — read-only plus drafts. Nothing can be sent or
-posted: that is phase 10.
+Your real calendar, mail and Slack — read-only plus drafts. Sending needs a click on an approval card and
+a 30-second undo window.
 
 **What live mode costs.** Every sweep is a model turn. Measured here: a calendar
 sweep takes 124–144 s and a mail sweep 197–232 s, so both run every 10 minutes in
@@ -95,6 +95,10 @@ the real cadence, the next sweep and the measured round-trip.
 .\.venv\Scripts\python.exe -m tests.test_phase9
 ```
 
+```bash
+.\.venv\Scripts\python.exe -m tests.test_phase10
+```
+
 Needs a display:
 
 ```bash
@@ -131,7 +135,9 @@ undo a click. `test_phase7` (97 checks) covers the search index and the query bu
 including 28 inputs that are FTS5 syntax errors if passed through raw.
 `test_phase8` (81 checks) covers commitment extraction, the summaries and the
 metrics. `test_phase9` (62 checks) covers the Outlook detector and the drop folder,
-including nine hostile files. `live_calendar`, `live_mail` and `live_classify` each
+including nine hostile files. `test_phase10` (76 checks) covers the send path with
+the connector replaced by a recorder, so it asserts which tool would have been
+called, with what, and how often, without sending anything. `live_calendar`, `live_mail` and `live_classify` each
 do one real pass against your own data.
 
 ## What phase 1 gives you
@@ -163,6 +169,26 @@ Press `?` in the panel for the full list.
 | `j` `k` | move through the focus queue |
 | `r` `e` `s` `d` | reply, done, snooze, delegate |
 | `?` | keyboard overlay |
+
+## What phase 10 adds
+
+- **`cli.run_write` is the only path to a write tool**, with three locks: a real
+  `ApprovalToken` (mintable only from a click handler), a tool that must be in
+  `WRITE_TOOLS`, and exactly one tool allowlisted while every *other* write tool is
+  still passed as `--disallowedTools`. A send talked into forwarding is denied by
+  the CLI itself.
+- **The approved draft travels with the token.** The connector is handed the exact
+  text the card showed, never an id to regenerate from — a second generation could
+  differ from what you read.
+- **Undo is recorded.** Something you nearly sent is worth being able to look up, so
+  cancelling inside the 30 s window writes an `undone` line to the action log.
+- **A double-click cannot send twice.** The draft is marked sent, and a second
+  approval is refused rather than re-run.
+- **RSVP is its own write**, with its own approval and its own token. The calendar
+  still sends no messages.
+- **Risk tier 2 exists and is tested.** Nothing in HELM deletes anything today, so
+  nothing uses it — but the second-confirmation gate is in place and proven, rather
+  than being a comment to be written the day something needs it.
 
 ## What phase 9 adds
 

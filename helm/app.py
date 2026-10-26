@@ -457,6 +457,7 @@ class Api:
             "summaries": self.summaries(),
             "realtime": self.realtime_info() if not self._demo else None,
             # What the chat drawer is allowed to attach, stated rather than implied.
+            "can_rsvp": item.source == "calendar" and bool(item.rsvp_pending),
             "attached": [
                 {"label": "this message", "included": True},
                 {"label": (f"{len(thread)} messages in thread" if thread
@@ -631,8 +632,9 @@ class Api:
         shown = f"{draft.subject}\n\n{draft.body}"
         emit(shown)
         return shown, {
-            "draft_id": draft.id, "channel": "mail", "to": draft.to_addr,
-            "subject": draft.subject, "body": draft.body, "risk": "send",
+            "draft_id": draft.id, "channel": channel, "to": draft.to_addr,
+            "subject": draft.subject, "body": draft.body,
+            "risk": _RISK.get(channel, "send"),
         }
 
     def _approval_card(self, item_id: str, prompt: str) -> dict | None:
@@ -653,7 +655,7 @@ class Api:
         return {
             "draft_id": draft.id, "channel": draft.channel, "to": draft.to_addr,
             "subject": draft.subject, "body": draft.body,
-            "risk": "send",  # send | post | irreversible
+            "risk": _RISK.get(draft.channel, "send"),
         }
 
     def quick_action(self, item_id: str, chip: str) -> dict:
@@ -661,23 +663,81 @@ class Api:
 
     # ── the one place a send can begin ──────────────────────────────────────
 
-    def approve_send(self, draft_id: str) -> dict:
-        """Called from the approval card's click handler. The only mint site."""
+    def approve_send(self, draft_id: str, confirmed: bool = False) -> dict:
+        """Called from the approval card's click handler. The only mint site.
+
+        The draft is handed to the connector rather than its id alone, so what is
+        sent is exactly the text the card showed. Re-deriving it from the item would
+        let a second generation differ from what the user read and approved.
+        """
         draft = self._store.draft(draft_id)
         if draft is None:
             return {"error": "unknown draft"}
+        if draft.status == "sent":
+            # The undo window plus a slow connector makes a double-click possible.
+            return {"error": "that draft has already been sent"}
+
+        # Risk tier 2: approval is not enough on its own.
+        if _RISK.get(draft.channel) == "irreversible" and not confirmed:
+            return {"needs_confirmation": True,
+                    "warning": "this cannot be undone once it goes"}
+
         token = ApprovalToken.mint_from_click(draft_id)
-        source = self._sources.get(draft.channel if draft.channel in self._sources else "mail")
+        source = self._sources.get(
+            draft.channel if draft.channel in self._sources else "mail")
         try:
-            result = source.send(draft_id, token)
-        except (SendRefused, NotImplementedError) as e:
+            result = source.send(draft_id, token, draft)
+        except (SendRefused, NotImplementedError, PermissionError,
+                cli.ClaudeUnavailable) as e:
             self._store.log_action("send", draft.to_addr, draft.channel, draft.body,
                                    "failed", approved_by="click")
             self._bus.publish("action_logged", {"draft_id": draft_id})
-            return {"error": str(e) or "this source cannot send yet"}
+            return {"error": str(e) or "this source cannot send"}
+
+        self._store.set_draft_status(draft_id, "sent")
         self._store.log_action("send", draft.to_addr, draft.channel, draft.body,
-                              "sent" if result.get("ok") else "failed", approved_by="click")
+                               "sent" if result.get("ok") else "failed",
+                               approved_by="click")
         self._bus.publish("action_logged", {"draft_id": draft_id})
+        return result
+
+    def cancel_send(self, draft_id: str) -> dict:
+        """Undo, clicked inside the 30 s window. Recorded, because a thing you
+        nearly sent is worth being able to look up."""
+        draft = self._store.draft(draft_id)
+        if draft is None:
+            return {"error": "unknown draft"}
+        self._store.set_draft_status(draft_id, "undone")
+        self._store.log_action("send", draft.to_addr, draft.channel, draft.body,
+                               "undone", approved_by="click")
+        self._bus.publish("action_logged", {"draft_id": draft_id})
+        return {"ok": True, "undone": True}
+
+    def approve_rsvp(self, item_id: str, response: str) -> dict:
+        """Accept, decline or tentatively accept, from a click. Its own approval."""
+        item = self._store.item(item_id)
+        if item is None or item.source != "calendar":
+            return {"error": "not a meeting"}
+        source = self._sources.get("calendar")
+        if not hasattr(source, "respond"):
+            return {"error": "this calendar source cannot RSVP"}
+
+        # A cross-source action is still one approval per write: the RSVP mints its
+        # own token and never reuses one from a mail or Slack card.
+        token = ApprovalToken.mint_from_click(f"rsvp-{item_id}-{response}")
+        try:
+            result = source.respond(item, response, token)
+        except (SendRefused, NotImplementedError, PermissionError,
+                cli.ClaudeUnavailable) as e:
+            self._store.log_action("rsvp", item.subject, "calendar", response,
+                                   "failed", approved_by="click")
+            self._bus.publish("action_logged", {"item_id": item_id})
+            return {"error": str(e)}
+
+        self._store.set_item_state(item_id, "done", rsvp_pending=0)
+        self._store.log_action("rsvp", item.subject, "calendar", response,
+                               "sent", approved_by="click")
+        self._bus.publish("action_logged", {"item_id": item_id})
         return result
 
     def rebuild_voice(self) -> dict:
@@ -831,6 +891,12 @@ class Api:
 
 # Chat intents that would produce something sendable. Module-level, not a class
 # attribute: pywebview exposes every public attribute of js_api to JavaScript.
+# Risk tier per channel. Tier 1 (send, post, rsvp) is one click plus the 30 s undo.
+# Tier 2 (irreversible) needs a second confirmation, and `approve_send` enforces it.
+# Nothing in HELM deletes anything today; the tier exists so that the day something
+# does, the gate is already here and already tested.
+_RISK = {"mail": "send", "slack": "post", "calendar": "rsvp"}
+
 _WRITE_INTENTS = ("draft reply", "reply", "propose new time", "post summary",
                   "follow up", "nudge", "delegate")
 

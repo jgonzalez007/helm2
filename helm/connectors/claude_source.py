@@ -237,10 +237,39 @@ class CalendarSource:
     def draft(self, item_id: str, intent: str) -> Draft:
         raise NotImplementedError("the calendar source is read-only until phase 10")
 
-    def send(self, draft_id: str, approval: ApprovalToken) -> dict:
-        # Still check the gate: a read-only source must refuse for the right reason.
+    RSVP = ("accept", "decline", "tentative")
+
+    def send(self, draft_id: str, approval: ApprovalToken,
+             draft: Draft | None = None) -> dict:
+        """The calendar has no messages to send. RSVP goes through respond()."""
         require_approval(draft_id, approval)
-        raise SendRefused("the calendar source is read-only until phase 10")
+        raise SendRefused("the calendar sends nothing; use respond() to RSVP")
+
+    def respond(self, item, response: str, approval: ApprovalToken,
+                comment: str = "") -> dict:
+        """Accept, decline or tentatively accept one meeting.
+
+        Takes the Item rather than an id, so the subject and time in the prompt are
+        the ones the approval card showed rather than something re-fetched after.
+        """
+        if not isinstance(approval, ApprovalToken):
+            raise SendRefused("an RSVP needs a clicked ApprovalToken")
+        if response not in self.RSVP:
+            raise SendRefused(f"{response!r} is not an RSVP")
+        if item is None or not item.subject:
+            raise SendRefused("RSVP needs the meeting that was approved")
+
+        lines = [
+            f"RSVP {response} to this meeting now.",
+            f"Subject: {item.subject}",
+            f"Starts: {item.starts_at}",
+            f"Organizer: {item.sender_addr or item.sender}",
+        ]
+        if comment:
+            lines.append(f"Comment: {comment}")
+        reply = cli.run_write(f"{cli.MS365}outlook_respond_to_event",
+                              "\n".join(lines), approval)
+        return {"ok": True, "reply": reply[:400], "response": response}
 
     def subscribe(self, bus: EventBus) -> None:
         self._bus = bus

@@ -512,6 +512,14 @@ class Store:
                      to_addr=row["to_addr"], subject=row["subject"], body=row["body"],
                      created_at=row["created_at"], status=row["status"])
 
+    def set_draft_status(self, draft_id: str, status: str) -> None:
+        """Marks a draft sent or undone. `approve_send` checks this before sending,
+        so a second click inside the undo window cannot send the same mail twice."""
+        stamp = "sent_at=?" if status == "sent" else "undo_until=?"
+        self._conn().execute(
+            f"UPDATE draft SET status=?, {stamp} WHERE id=?",
+            (status, now_iso(), draft_id))
+
     def log_action(self, verb: str, target: str, source: str, payload: str,
                    status: str, approved_by: str = "") -> None:
         # approved_by has exactly one legal non-empty value. Anything else is a bug,

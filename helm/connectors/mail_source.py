@@ -591,9 +591,29 @@ class MailSource:
             created_at=now_iso(),
         )
 
-    def send(self, draft_id: str, approval: ApprovalToken) -> dict:
+    def send(self, draft_id: str, approval: ApprovalToken,
+             draft: Draft | None = None) -> dict:
+        """Send one approved mail. The body goes as written, never regenerated.
+
+        The draft is passed in rather than re-fetched, because the text the user
+        read on the approval card is the text that must go. Asking the model to
+        write it again could produce something subtly different.
+        """
         require_approval(draft_id, approval)
-        raise SendRefused("mail sending is wired in phase 10")
+        if draft is None:
+            raise SendRefused("send needs the exact draft that was approved")
+        if not draft.to_addr:
+            raise SendRefused("no recipient on the approved draft")
+
+        prompt = "\n".join([
+            "Send this email now, exactly as written.",
+            f"To: {draft.to_addr}",
+            f"Subject: {draft.subject}",
+            "Body:",
+            draft.body,
+        ])
+        reply = cli.run_write(f"{cli.MS365}outlook_send_mail", prompt, approval)
+        return {"ok": True, "reply": reply[:400], "to": draft.to_addr}
 
     def subscribe(self, bus: EventBus) -> None:
         self._bus = bus

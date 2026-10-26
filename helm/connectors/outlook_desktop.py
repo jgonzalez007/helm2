@@ -145,7 +145,8 @@ class OutlookDesktopSource:
     def draft(self, item_id: str, intent: str) -> Draft:
         raise NotImplementedError(f"{self.name}: {self.detection.reason}")
 
-    def send(self, draft_id: str, approval: ApprovalToken) -> dict:
+    def send(self, draft_id: str, approval: ApprovalToken,
+             draft: Draft | None = None) -> dict:
         raise SendRefused(f"{self.name}: {self.detection.reason}")
 
     def subscribe(self, bus: EventBus) -> None:

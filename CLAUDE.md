@@ -250,11 +250,16 @@ Prompt wording is the weakest control in this app. The one that actually holds i
 needs, and headless mode denies everything else. Even a fully hijacked agent cannot
 send mail, post to Slack or RSVP, because those tools were never available to it.
 
-- `claude_cli.WRITE_TOOLS` is never allowlisted by anything. It is passed as
-  `--disallowedTools` on every call, so a future allowlist mistake still cannot
-  reach it.
-- Writes go through `Connector.send()` with a clicked `ApprovalToken`. That path is
-  built in phase 10.
+- No *read* path allowlists anything in `claude_cli.WRITE_TOOLS`; every read call
+  passes the whole set as `--disallowedTools`.
+- `cli.run_write` is the only path to a write tool, and it has three locks: a real
+  `ApprovalToken`, a tool that must be in `WRITE_TOOLS`, and exactly one tool
+  allowlisted while every other write tool is still disallowed. A send talked into
+  forwarding or deleting is refused by the CLI, not by the prompt.
+- The approved `Draft` is handed to `send()` alongside the token. Re-deriving the
+  text from the item would let a second generation differ from what the user read.
+- There are exactly two mint sites, `Api.approve_send` and `Api.approve_rsvp`, and
+  `tests/test_phase10.py` asserts that count.
 - A new allowlist constant must be covered by `tests/test_phase2.py`, which asserts
   no read allowlist intersects `WRITE_TOOLS`.
 

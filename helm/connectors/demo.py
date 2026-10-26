@@ -289,7 +289,8 @@ class DemoSource:
             to_addr=to_addr, subject=subject, body=body, created_at=now_iso(),
         )
 
-    def send(self, draft_id: str, approval: ApprovalToken) -> dict:
+    def send(self, draft_id: str, approval: ApprovalToken,
+             draft: Draft | None = None) -> dict:
         require_approval(draft_id, approval)
         # Demo mode stops here on purpose: the gate is exercised, nothing leaves.
         return {"ok": True, "demo": True, "note": "demo mode — nothing was actually sent"}

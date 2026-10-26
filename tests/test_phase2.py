@@ -427,12 +427,14 @@ def test_read_only_sources_refuse_to_send() -> None:
     else:
         raise AssertionError("FAILED: calendar send accepted a missing token")
 
-    # Even a genuine clicked token cannot make a read-only source send.
+    # Even a genuine clicked token cannot make the calendar send a message. Phase 10
+    # gave it an RSVP, which is a different verb with its own approval — the
+    # calendar still has nothing to send.
     try:
         source.send("x", ApprovalToken.mint_from_click("x"))
     except SendRefused as e:
-        check("a clicked token still cannot send from a read-only source",
-              "read-only" in str(e))
+        check("a clicked token still cannot send a message from the calendar",
+              "sends nothing" in str(e), str(e))
     else:
         raise AssertionError("FAILED: calendar send went through")
 

@@ -465,9 +465,10 @@ def test_slack_cannot_send() -> None:
     try:
         source.send("d1", ApprovalToken.mint_from_click("d1"))
     except SendRefused as e:
-        check("even a clicked token cannot post yet", "phase 10" in str(e), str(e))
+        # Phase 10 wired posting. The approved draft must come with the token.
+        check("a clicked token alone is not enough", "exact draft" in str(e), str(e))
     else:
-        raise AssertionError("FAILED: Slack send went through")
+        raise AssertionError("FAILED: Slack post went through on a token alone")
 
 
 def test_draft_goes_back_to_the_conversation() -> None:

@@ -436,9 +436,23 @@ class SlackSource:
             created_at=now_iso(),
         )
 
-    def send(self, draft_id: str, approval: ApprovalToken) -> dict:
+    def send(self, draft_id: str, approval: ApprovalToken,
+             draft: Draft | None = None) -> dict:
+        """Post one approved message. A post is not a send, and the card says so."""
         require_approval(draft_id, approval)
-        raise SendRefused("posting to Slack is wired in phase 10")
+        if draft is None:
+            raise SendRefused("send needs the exact draft that was approved")
+        if not draft.to_addr:
+            raise SendRefused("no conversation on the approved draft")
+
+        prompt = "\n".join([
+            "Post this Slack message now, exactly as written.",
+            f"Conversation: {draft.to_addr}",
+            "Message:",
+            draft.body,
+        ])
+        reply = cli.run_write(f"{cli.SLACK}slack_send_message", prompt, approval)
+        return {"ok": True, "reply": reply[:400], "to": draft.to_addr}
 
     def subscribe(self, bus: EventBus) -> None:
         self._bus = bus

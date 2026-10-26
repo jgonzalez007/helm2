@@ -357,30 +357,38 @@ def test_thread_key_falls_back_to_the_subject() -> None:
 
 def test_sweep_maps_inbox_and_sent(monkeypatched=None) -> None:
     print("one sweep produces inbox rows, waiting rows and a voice profile")
+    # Dates are relative to today. Hardcoding them made this check pass for three
+    # days and then fail, because the sent message aged past the 3-day waiting
+    # threshold and a fourth row appeared.
+    today = datetime.now().astimezone().replace(microsecond=0)
+    stamp = (today - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.0000000")
+    earlier = (today - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S.0000000")
+    earliest = (today - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%S.0000000")
+
     reply = """```json
 {"inbox": [
   {"id":"i1","conversation_id":"c1","subject":"Q4 forecast sign-off",
    "from_name":"Scott Chen","from_email":"scott.chen@sailpoint.com",
    "to_emails":["jose.gonzalez@sailpoint.com"],"cc_emails":[],
-   "received":"2026-10-19T08:00:00.0000000","timezone":"","is_read":false,
+   "received":"STAMP","timezone":"","is_read":false,
    "has_attachments":false,"preview":"Need your numbers."},
   {"id":"i2","conversation_id":"c2","subject":"Weekly newsletter",
    "from_name":"Eng Comms","from_email":"no-reply@sailpoint.com",
    "to_emails":["jose.gonzalez@sailpoint.com"],"cc_emails":[],
-   "received":"2026-10-19T07:00:00.0000000","timezone":"","is_read":true,
+   "received":"EARLIER","timezone":"","is_read":true,
    "has_attachments":false,"preview":"What shipped."},
   {"id":"i3","conversation_id":"c3","subject":"FYI only",
    "from_name":"Bryan","from_email":"bryan.kelley@sailpoint.com",
    "to_emails":["other@sailpoint.com"],"cc_emails":["jose.gonzalez@sailpoint.com"],
-   "received":"2026-10-19T06:00:00.0000000","timezone":"","is_read":true,
+   "received":"EARLIEST","timezone":"","is_read":true,
    "has_attachments":false,"preview":"Context."}
 ],
 "sent": [
   {"id":"s1","conversation_id":"c3","subject":"Re: FYI only",
-   "to_emails":["bryan.kelley@sailpoint.com"],"sent":"2026-10-19T06:30:00.0000000",
+   "to_emails":["bryan.kelley@sailpoint.com"],"sent":"EARLIEST",
    "preview":"Hi Bryan,\\n\\nGot it.\\n\\nThanks"}
 ]}
-```"""
+```""".replace("STAMP", stamp).replace("EARLIEST", earliest).replace("EARLIER", earlier)
     fake = FakeCli(reply)
     real = cli.run_once
     cli.run_once = fake
@@ -410,8 +418,12 @@ def test_sweep_maps_inbox_and_sent(monkeypatched=None) -> None:
           str(source.status().count))
     check("the voice profile was built", source.voice.get("samples") == 1,
           str(source.voice))
+    # The wall-clock form Microsoft returns carries seven fractional digits, which
+    # datetime.fromisoformat rejects. What matters is that it parsed at all and kept
+    # the hour it was given.
     check("the fractional timestamp parsed",
-          by_id["i1"].received_at.startswith("2026-10-19T08:00:00"))
+          by_id["i1"].received_at.startswith(stamp[:19]),
+          f"{by_id['i1'].received_at} from {stamp}")
 
 
 def test_sweep_failures_are_honest() -> None:
@@ -490,9 +502,12 @@ def test_mail_cannot_send() -> None:
     try:
         source.send("d1", ApprovalToken.mint_from_click("d1"))
     except SendRefused as e:
-        check("even a clicked token cannot send yet", "phase 10" in str(e), str(e))
+        # Phase 10 wired sending. A clicked token is now necessary but not
+        # sufficient: the exact draft the card showed must come with it, so a send
+        # can never be a freshly generated message the user never read.
+        check("a clicked token alone is not enough", "exact draft" in str(e), str(e))
     else:
-        raise AssertionError("FAILED: mail send went through")
+        raise AssertionError("FAILED: mail send went through on a token alone")
 
 
 def test_draft_never_sends_and_is_addressed_to_the_sender() -> None:

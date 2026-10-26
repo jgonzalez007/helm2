@@ -173,7 +173,8 @@ class DropFolderSource:
             "the drop folder is a notification path, not a mailbox: open the item "
             "to draft through the mail connector")
 
-    def send(self, draft_id: str, approval: ApprovalToken) -> dict:
+    def send(self, draft_id: str, approval: ApprovalToken,
+             draft: Draft | None = None) -> dict:
         raise SendRefused("the drop folder is read-only by construction")
 
     def subscribe(self, bus: EventBus) -> None:

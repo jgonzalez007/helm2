@@ -245,6 +245,16 @@ async function openItem(itemId) {
         data-item-id="${esc(item.id)}">more urgent ↑</button>
     </div>
     <div id="threadbox">${renderThread(d)}</div>
+    ${d.can_rsvp ? `<div class="nextup-actions" style="margin:14px 0">
+      <button class="btn btn--primary" data-rsvp="accept"
+        data-item-id="${esc(item.id)}">Accept</button>
+      <button class="btn" data-rsvp="tentative"
+        data-item-id="${esc(item.id)}">Tentative</button>
+      <button class="btn btn--danger" data-rsvp="decline"
+        data-item-id="${esc(item.id)}">Decline</button>
+      <span style="align-self:center;color:var(--mute);font-size:12.5px">
+        each RSVP is its own approval</span>
+    </div>` : ''}
     <div class="chips">${(CHIPS[item.source] || []).map((c) => `<button class="chip"
       data-chip="${esc(c)}">${esc(c)}</button>`).join('')}</div>`;
 
@@ -344,16 +354,29 @@ function startDelaySend(card, draftId) {
     left -= 1;
     if (left > 0) { paint(); return; }
     clearInterval(timer);
-    const res = await call('approve_send', draftId);
+    bar.textContent = 'Sending…';
+    let res = await call('approve_send', draftId);
+    if (res?.needs_confirmation) {
+      // Risk tier 2: approval alone is not enough.
+      // eslint-disable-next-line no-alert
+      if (!window.confirm(`${res.warning}\n\nSend anyway?`)) {
+        await call('cancel_send', draftId);
+        bar.textContent = 'Cancelled. Nothing was sent.';
+        return;
+      }
+      res = await call('approve_send', draftId, true);
+    }
     bar.textContent = res?.demo
       ? 'Demo mode — the approval gate ran, nothing was actually sent.'
-      : (res?.ok ? 'Sent.' : 'Send failed.');
+      : (res?.error ? `Send failed: ${res.error}` : (res?.ok ? 'Sent.' : 'Send failed.'));
   }, 1000);
 
-  bar.addEventListener('click', (e) => {
+  bar.addEventListener('click', async (e) => {
     if (!e.target.closest('[data-undo]')) return;
     clearInterval(timer);
     bar.textContent = 'Cancelled. Nothing was sent.';
+    // Recorded: something you nearly sent is worth being able to look up.
+    await call('cancel_send', draftId);
   });
 }
 
@@ -410,6 +433,16 @@ document.addEventListener('click', async (e) => {
     const res = await call('delete_shortcut', Number(delSc.dataset.delSc));
     if (res) st.shortcuts = res.shortcuts;
     return render();
+  }
+
+  const rsvp = t.closest('[data-rsvp]');
+  if (rsvp) {
+    const res = await call('approve_rsvp', rsvp.dataset.itemId, rsvp.dataset.rsvp);
+    rsvp.closest('.nextup-actions').innerHTML = res?.error
+      ? `<span style="color:var(--red)">${esc(res.error)}</span>`
+      : `<span class="pill pill--done">${esc(rsvp.dataset.rsvp)} sent</span>`;
+    await refresh();
+    return undefined;
   }
 
   const commitDone = t.closest('[data-commit-done]');
